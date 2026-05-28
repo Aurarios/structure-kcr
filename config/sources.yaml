@@ -1,0 +1,124 @@
+# Khmer text corpus source registry.
+# Each entry: name, type (hf|dump|opus|scrape), license, and fetch parameters.
+# `enabled: false` sources are known but skipped (e.g. heavy, or license review pending).
+# Licenses are recorded per-source so the LM corpus can be filtered to permissive-only later.
+
+defaults:
+  lang: km                       # ISO code for Khmer
+  khmer_unicode_block: [0x1780, 0x17FF]   # plus 0x19E0-0x19FF (Khmer Symbols)
+
+sources:
+  # ---------- Web-scale (HuggingFace `datasets`, Parquet, ungated) ----------
+  # NOTE: datasets>=4 dropped loading-script support, so script-based sets
+  # (cc100, mc4, MADLAD-400, OSCAR-2301) no longer load. Use Parquet sources below.
+  - name: fineweb2_km
+    type: hf
+    hf_path: HuggingFaceFW/fineweb-2
+    hf_config: khm_Khmr
+    text_field: text
+    license: "ODC-BY (CommonCrawl-derived)"
+    enabled: true                # PRIMARY web-scale source; rely on --limit to cap
+
+  - name: glot500_km
+    type: hf
+    hf_path: cis-lmu/Glot500
+    hf_config: khm_Khmr
+    text_field: text
+    license: "per-source (aggregated); research"
+    enabled: true
+
+  # --- gated / script-based (kept for reference; disabled) ---
+  - name: oscar_2301_km
+    type: hf
+    hf_path: oscar-corpus/OSCAR-2301
+    hf_config: km
+    text_field: text
+    license: CC0-ish (per-doc CC; web-crawl)
+    enabled: false               # GATED on HF (needs token)
+  - name: cc100_km
+    type: hf
+    hf_path: cc100
+    hf_config: km
+    text_field: text
+    license: "Common Crawl terms"
+    enabled: false               # script-based: unsupported in datasets>=4
+  - name: mc4_km
+    type: hf
+    hf_path: mc4
+    hf_config: km
+    text_field: text
+    license: "ODC-BY (Common Crawl)"
+    enabled: false               # script-based: unsupported in datasets>=4
+  - name: culturax_km
+    type: hf
+    hf_path: uonlp/CulturaX
+    hf_config: km
+    text_field: text
+    license: "mC4+OSCAR terms (research)"
+    enabled: false               # GATED on HF (needs token)
+  - name: madlad400_km
+    type: hf
+    hf_path: allenai/MADLAD-400
+    hf_config: km
+    text_field: text
+    license: "ODC-BY"
+    enabled: false               # script-based: unsupported in datasets>=4
+
+  # ---------- Curated / encyclopedic ----------
+  - name: wikipedia_km
+    type: hf
+    hf_path: wikimedia/wikipedia
+    hf_config: 20231101.km
+    text_field: text
+    license: "CC BY-SA 4.0"
+    enabled: true
+
+  - name: wiktionary_km_dump
+    type: dump
+    url: https://dumps.wikimedia.org/kmwiktionary/latest/kmwiktionary-latest-pages-articles.xml.bz2
+    parser: mediawiki
+    license: "CC BY-SA 4.0"
+    enabled: false
+
+  - name: leipzig_khm_news
+    type: dump
+    url: https://downloads.wortschatz-leipzig.de/corpora/khm_news_2020_100K.tar.gz
+    parser: leipzig_sentences
+    license: "CC BY 4.0 (Leipzig Corpora Collection)"
+    enabled: true
+
+  # ---------- Khmer-specific repositories ----------
+  - name: khpos
+    type: hf
+    hf_path: seanghay/khPOS
+    text_field: text
+    license: "CC BY-NC-SA 4.0"   # NON-COMMERCIAL — flagged
+    non_commercial: true
+    enabled: true
+
+  - name: phylypo_khmer_text
+    type: scrape
+    url: https://raw.githubusercontent.com/phylypo/khmer-text-data/master/
+    license: "see repo"
+    enabled: false               # configure specific file list before enabling
+
+  # ---------- OPUS parallel/monolingual (Khmer side only) ----------
+  - name: opus_opensubtitles_km
+    type: opus
+    corpus: OpenSubtitles
+    lang: km
+    license: "OPUS terms"
+    enabled: false
+
+  # ---------- Targeted scrape (news / gov / literary) ----------
+  - name: news_rss
+    type: scrape
+    seeds:
+      # Add Khmer news/blog RSS or index URLs here. robots.txt is always honored.
+      - https://www.postkhmer.com/rss.xml
+      - https://kohsantepheapdaily.com.kh/feed
+    extractor: trafilatura
+    license: "copyrighted — text used for training only, not redistributed"
+    rate_limit_seconds: 2.0
+    max_pages_per_seed: 500
+    enabled: false               # enable after reviewing each site's robots.txt/ToS

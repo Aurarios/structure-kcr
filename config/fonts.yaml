@@ -1,0 +1,107 @@
+# Khmer font registry for synthetic rendering.
+# `weight` is the sampling probability weight. HARD fonts are deliberately UP-WEIGHTED
+# because they are where OCR fails (Bayon/Dangrek/iSeth First per arXiv 2506.23963).
+# `validate_coverage.py` fills in `coverage` and may auto-disable fonts with poor coeng support.
+#
+# download_url is best-effort; many of these ship via Google Fonts or the Khmer OS package.
+# Run `python -m src.fonts.fetch_fonts` to populate data/fonts/.
+
+download_dir: data/fonts
+
+fonts:
+  # ---- "easy" fonts (high OCR accuracy) — keep weights modest ----
+  - name: NotoSansKhmer
+    family: "Noto Sans Khmer"
+    difficulty: easy
+    weight: 1.0
+    source: google_fonts
+    google_family: "Noto Sans Khmer"
+  - name: NotoSerifKhmer
+    family: "Noto Serif Khmer"
+    difficulty: easy
+    weight: 1.0
+    source: google_fonts
+    google_family: "Noto Serif Khmer"
+  - name: Battambang
+    family: "Battambang"
+    difficulty: easy
+    weight: 1.0
+    source: google_fonts
+    google_family: "Battambang"
+  - name: Siemreap
+    family: "Siemreap"
+    difficulty: easy
+    weight: 1.0
+    source: google_fonts
+    google_family: "Siemreap"
+  - name: Content
+    family: "Content"
+    difficulty: easy
+    weight: 0.8
+    source: google_fonts
+    google_family: "Content"
+  - name: Suwannaphum
+    family: "Suwannaphum"
+    difficulty: medium
+    weight: 1.0
+    source: google_fonts
+    google_family: "Suwannaphum"
+  - name: Koulen
+    family: "Koulen"
+    difficulty: medium
+    weight: 1.0
+    source: google_fonts
+    google_family: "Koulen"
+  - name: Moul
+    family: "Moul"
+    difficulty: medium
+    weight: 1.0
+    source: google_fonts
+    google_family: "Moul"
+
+  # ---- "hard" decorative fonts — UP-WEIGHTED for training signal ----
+  - name: Bayon
+    family: "Bayon"
+    difficulty: hard
+    weight: 2.5
+    source: google_fonts
+    google_family: "Bayon"
+  - name: Dangrek
+    family: "Dangrek"
+    difficulty: hard
+    weight: 2.5
+    source: google_fonts
+    google_family: "Dangrek"
+  - name: Fasthand
+    family: "Fasthand"
+    difficulty: hard
+    weight: 2.0
+    source: google_fonts
+    google_family: "Fasthand"
+  - name: Bokor
+    family: "Bokor"
+    difficulty: hard
+    weight: 2.0
+    source: google_fonts
+    google_family: "Bokor"
+  - name: Metal
+    family: "Metal"
+    difficulty: hard
+    weight: 1.5
+    source: google_fonts
+    google_family: "Metal"
+  - name: Taprom
+    family: "Taprom"
+    difficulty: hard
+    weight: 1.5
+    source: google_fonts
+    google_family: "Taprom"
+
+  # iSeth First is not on Google Fonts; add a local path if you obtain it under an
+  # acceptable license, then set difficulty: hard, weight: 2.5.
+  # - name: iSethFirst
+  #   family: "iSeth First"
+  #   difficulty: hard
+  #   weight: 2.5
+  #   source: local
+  #   path: data/fonts/iSethFirst.ttf

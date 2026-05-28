@@ -1,0 +1,42 @@
+# Scan-like augmentation parameters (MODERATE — printed-doc scope, not real-world capture).
+# Applied by src/render/augment.py via albumentations/opencv AFTER rendering.
+# Bounding boxes are transformed consistently with geometric ops.
+
+# probability that any augmentation at all is applied to a page
+apply_prob: 0.85
+
+geometric:
+  rotate_deg: [-2.0, 2.0]        # small skew only; keeps boxes valid
+  perspective_scale: [0.0, 0.03]
+  rotate_prob: 0.5
+  perspective_prob: 0.25
+
+photometric:
+  brightness: [-0.12, 0.12]
+  contrast: [-0.12, 0.12]
+  brightness_contrast_prob: 0.5
+  gamma: [80, 120]
+  gamma_prob: 0.2
+
+noise:
+  gauss_var: [5.0, 25.0]
+  gauss_prob: 0.4
+  iso_noise_prob: 0.2
+
+blur:
+  gaussian_kernel: [3, 5]
+  gaussian_prob: 0.3
+  motion_kernel: [3, 7]
+  motion_prob: 0.1
+
+compression:
+  jpeg_quality: [55, 92]
+  jpeg_prob: 0.6
+
+paper:
+  shadow_prob: 0.15              # soft corner/edge shadow to mimic flatbed scan
+  texture_prob: 0.25            # overlay subtle paper grain
+
+# guard: never let augmentation push boxes outside the image or collapse text;
+# box_sanity.py re-validates all boxes after augmentation.
+min_visible_box_area_frac: 0.6

@@ -1,0 +1,32 @@
+# Khmer OCR dataset pipeline — Mac/CPU only (no training deps here)
+# Python 3.12
+
+# --- corpus collection & cleaning ---
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+trafilatura>=1.8           # robust article/main-text extraction
+datasets>=2.18            # HuggingFace dataset loaders (OSCAR, CC100, mC4, CulturaX, ...)
+huggingface_hub>=0.23
+mwparserfromhell>=0.6     # MediaWiki dump parsing (Wikipedia/Wiktionary)
+
+# --- dedup & quality filtering ---
+datasketch>=1.6           # MinHash / LSH near-duplicate detection
+fasttext-wheel>=0.9.2     # language id (lid.176); script-ratio is primary fallback
+
+# --- synthetic rendering ---
+playwright>=1.44          # Chromium render + DOM bbox extraction (shapes Khmer correctly)
+jinja2>=3.1               # HTML/CSS templates
+
+# --- augmentation & image io ---
+opencv-python>=4.9
+albumentations>=1.4
+numpy>=1.26
+pillow>=10.0
+
+# --- fonts ---
+fonttools>=4.50           # glyph/coeng coverage validation
+
+# --- misc ---
+pyyaml>=6.0
+tqdm>=4.66

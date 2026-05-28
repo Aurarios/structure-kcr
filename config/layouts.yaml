@@ -1,0 +1,56 @@
+# Synthetic page layout configuration.
+# The sampler picks a template per page (by weight) and randomizes within these ranges.
+
+page:
+  width_px: 1240          # ~A4 @ 150 DPI
+  # height grows with content; Playwright full-page screenshot captures it all
+  dpi: 150
+  margin_px: [60, 140]    # min,max random outer margin
+  background:
+    white_prob: 0.6
+    paper_textures: [cream, light_gray, off_white]   # used when not pure white
+
+# Template mix (sampling weights). Matches chosen scope: clean printed + rich structured.
+templates:
+  - name: article_single        # single-column news/blog article
+    weight: 3.0
+  - name: article_multicol      # 2-column article
+    weight: 2.0
+  - name: doc_with_table        # body text + one or more tables
+    weight: 2.0
+  - name: form_label_value      # label:value form / ID-card-like fields
+    weight: 1.5
+  - name: mixed_km_en           # Khmer body with embedded English terms/numbers
+    weight: 1.5
+
+typography:
+  body_font_px: [16, 26]
+  heading_scale: [1.4, 2.2]     # heading size = body * scale
+  line_height: [1.4, 2.0]       # Khmer needs generous leading for stacked glyphs
+  letter_spacing_px: [0.0, 0.5]
+  text_color_dark: ["#101010", "#1a1a2e", "#222222"]
+  align: [left, justify]
+
+content:
+  # how source corpus text is assembled into a page
+  paragraphs_per_article: [3, 9]
+  sentences_per_paragraph: [2, 6]
+  table:
+    rows: [3, 8]
+    cols: [2, 5]
+    header_prob: 0.9
+  form:
+    fields: [4, 10]
+
+block_types:               # DOM element -> grounded-markdown block tag
+  h1: title
+  h2: section_header
+  h3: section_header
+  p: text
+  table: table
+  th: table
+  td: table
+  li: list_item
+  figcaption: caption
+  label: form_label
+  .field-value: form_value

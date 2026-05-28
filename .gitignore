@@ -1,0 +1,40 @@
+# --- generated dataset / data (never commit) ---
+/data/
+
+# --- Python virtualenv + bytecode ---
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- runtime logs ---
+*.log
+/corpus_run.log
+/render_run.log
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- secrets / caches ---
+.env
+.env.*
+*.token
+hf_token*
+.cache/
+.huggingface/
+
+# --- claude-code local ---
+.claude/

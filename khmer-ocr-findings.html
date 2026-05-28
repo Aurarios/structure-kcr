@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Khmer Vision OCR with Structured Layout — Findings & Plan</title>
+<style>
+  :root{
+    --bg:#F0EEE6;
+    --paper:#FBFAF7;
+    --card:#FFFFFF;
+    --ink:#1F1E1D;
+    --ink-soft:#56544E;
+    --ink-faint:#85827A;
+    --line:#E5E2D9;
+    --line-soft:#EEECE4;
+    --accent:#CC785C;
+    --accent-deep:#B3603F;
+    --accent-wash:#F7EAE3;
+    --green:#5B8266;
+    --green-wash:#E7EFE8;
+    --amber:#B08328;
+    --amber-wash:#F6EFDC;
+    --red:#A85440;
+    --red-wash:#F4E5E0;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    font-size:16px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{
+    display:grid;
+    grid-template-columns:240px minmax(0,1fr);
+    max-width:1180px;
+    margin:0 auto;
+    gap:0;
+  }
+  /* Sidebar */
+  nav.toc{
+    position:sticky;
+    top:0;
+    align-self:start;
+    height:100vh;
+    overflow-y:auto;
+    padding:38px 22px 38px 28px;
+    border-right:1px solid var(--line);
+  }
+  nav.toc .brand{
+    display:flex;align-items:center;gap:9px;
+    font-weight:650;font-size:15px;margin-bottom:26px;letter-spacing:-0.01em;
+  }
+  nav.toc .dot{width:14px;height:14px;border-radius:50%;background:var(--accent);flex:none;}
+  nav.toc a{
+    display:block;
+    color:var(--ink-soft);
+    text-decoration:none;
+    font-size:13.5px;
+    padding:6px 10px;
+    border-radius:8px;
+    margin:1px 0;
+    transition:background .15s,color .15s;
+    line-height:1.35;
+  }
+  nav.toc a:hover{background:var(--accent-wash);color:var(--accent-deep);}
+  nav.toc .grp{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-faint);margin:20px 0 6px 10px;font-weight:600;}
+  /* Main */
+  main{padding:54px 60px 120px;max-width:820px;}
+  header.hero{margin-bottom:14px;}
+  .eyebrow{
+    display:inline-block;font-size:12.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--accent-deep);background:var(--accent-wash);padding:5px 12px;border-radius:30px;margin-bottom:18px;
+  }
+  h1{font-size:35px;line-height:1.16;letter-spacing:-0.02em;margin:.1em 0 .35em;font-weight:680;}
+  .lede{font-size:18px;color:var(--ink-soft);margin:0 0 8px;}
+  .meta{font-size:13px;color:var(--ink-faint);margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
+  h2{font-size:24px;letter-spacing:-0.015em;margin:54px 0 6px;font-weight:660;scroll-margin-top:24px;}
+  h2 .num{color:var(--accent);font-weight:660;margin-right:10px;}
+  h3{font-size:17.5px;margin:30px 0 6px;font-weight:640;letter-spacing:-0.01em;}
+  p{margin:12px 0;}
+  a{color:var(--accent-deep);}
+  .sub{color:var(--ink-soft);font-size:15px;margin-top:2px;}
+  strong{font-weight:640;}
+  code{
+    font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+    font-size:.86em;background:#EFEDE4;padding:2px 6px;border-radius:5px;color:#5a4636;
+    border:1px solid #E4E1D7;
+  }
+  .km{font-family:"Khmer OS","Noto Sans Khmer","Battambang",serif;}
+  /* Cards */
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 24px;margin:18px 0;
+  }
+  .verdict{
+    background:linear-gradient(180deg,#FBFAF7,#F7F4ED);
+    border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:var(--radius);padding:24px 26px;margin:26px 0;
+  }
+  .verdict h3{margin-top:0;}
+  .callout{border-radius:12px;padding:16px 18px;margin:18px 0;font-size:15px;border:1px solid;}
+  .callout .tag{font-weight:660;font-size:12px;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:5px;}
+  .c-key{background:var(--accent-wash);border-color:#E9D6CC;}
+  .c-key .tag{color:var(--accent-deep);}
+  .c-warn{background:var(--amber-wash);border-color:#EADFBE;}
+  .c-warn .tag{color:var(--amber);}
+  .c-good{background:var(--green-wash);border-color:#D2E2D5;}
+  .c-good .tag{color:var(--green);}
+  .c-risk{background:var(--red-wash);border-color:#E9CFC7;}
+  .c-risk .tag{color:var(--red);}
+  /* Table */
+  table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14.5px;}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);font-weight:600;border-bottom:1px solid var(--line);}
+  tr:last-child td{border-bottom:none;}
+  td:first-child{font-weight:600;white-space:nowrap;}
+  .tbl-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+  .tbl-card table{margin:0;}
+  .tbl-card th,.tbl-card td{padding-left:22px;padding-right:22px;}
+  /* Pipeline flow */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:22px 0;}
+  .flow .step{flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center;position:relative;}
+  .flow .arrow{display:flex;align-items:center;color:var(--accent);font-size:20px;padding:0 6px;}
+  .flow .step .n{font-size:11px;color:var(--accent-deep);font-weight:660;}
+  .flow .step .t{font-weight:620;font-size:13.5px;margin-top:3px;}
+  .flow .step .d{font-size:11.5px;color:var(--ink-faint);margin-top:3px;line-height:1.3;}
+  /* Phases */
+  .phase{display:grid;grid-template-columns:88px 1fr;gap:0;margin:0;}
+  .phase .rail{position:relative;}
+  .phase .rail::before{content:"";position:absolute;left:18px;top:0;bottom:0;width:2px;background:var(--line);}
+  .phase:last-child .rail::before{bottom:auto;height:34px;}
+  .phase .bubble{position:relative;z-index:1;width:38px;height:38px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:680;font-size:14px;margin-top:24px;border:4px solid var(--bg);}
+  .phase .body{padding:22px 0 6px;}
+  .phase .body h3{margin-top:0;}
+  .phase .when{font-size:12px;color:var(--ink-faint);font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
+  ul,ol{margin:12px 0;padding-left:22px;}
+  li{margin:7px 0;}
+  li::marker{color:var(--accent);}
+  .pill{display:inline-block;font-size:12px;background:#EFEDE4;border:1px solid var(--line);border-radius:20px;padding:3px 11px;margin:3px 4px 3px 0;color:var(--ink-soft);}
+  .pill b{color:var(--ink);font-weight:620;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
+  .mini h4{margin:0 0 6px;font-size:14.5px;}
+  .mini p{margin:0;font-size:13.5px;color:var(--ink-soft);}
+  pre{background:#2b2722;color:#f0ebe2;border-radius:12px;padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.55;border:1px solid #3a342d;}
+  pre code{background:none;border:none;color:inherit;padding:0;font-size:13px;}
+  .sources{font-size:13.5px;}
+  .sources li{margin:6px 0;color:var(--ink-soft);}
+  hr{border:none;border-top:1px solid var(--line);margin:48px 0;}
+  .footnote{font-size:13px;color:var(--ink-faint);font-style:italic;}
+  @media(max-width:860px){
+    .wrap{grid-template-columns:1fr;}
+    nav.toc{display:none;}
+    main{padding:34px 22px 90px;}
+    h1{font-size:28px;}
+    .grid2{grid-template-columns:1fr;}
+    .flow{flex-direction:column;}
+    .flow .arrow{transform:rotate(90deg);justify-content:center;padding:4px 0;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc">
+    <div class="brand"><span class="dot"></span> Khmer OCR Plan</div>
+    <div class="grp">Assessment</div>
+    <a href="#verdict">Verdict</a>
+    <a href="#basemodel">1 · DeepSeek-OCR-2 as base</a>
+    <a href="#reframe">2 · Reframing the dataset</a>
+    <div class="grp">Build it right</div>
+    <a href="#khmer">3 · Khmer-specific traps</a>
+    <a href="#fonts">4 · Font-agnostic, done right</a>
+    <a href="#layout">5 · Structured layout output</a>
+    <a href="#pipeline">6 · The data pipeline</a>
+    <div class="grp">Execution</div>
+    <a href="#roadmap">7 · Phased roadmap</a>
+    <a href="#stack">8 · Recommended stack</a>
+    <a href="#bootstrap">9 · Bootstrap resources</a>
+    <a href="#risks">10 · Risks & pitfalls</a>
+    <a href="#sources">Sources</a>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <span class="eyebrow">Research findings &amp; recommendation</span>
+      <h1>Building a Khmer Vision OCR with Structured Layout Output</h1>
+      <p class="lede">A grounded assessment of your plan — fine-tuning DeepSeek-OCR-2, building a Khmer dataset, and going font-agnostic — plus the one reframe that will save you the most time.</p>
+      <div class="meta">Prepared 27 May 2026 · Base model: <code>deepseek-ai/DeepSeek-OCR-2</code> · Sources linked throughout and listed at the end.</div>
+    </header>
+
+    <!-- VERDICT -->
+    <section id="verdict">
+      <div class="verdict">
+        <h3>Short answer: yes, this is very achievable — and you've picked the right base model.</h3>
+        <p style="margin-bottom:8px">DeepSeek-OCR-2 is genuinely well-suited to what you want: it already does <strong>grounding mode with layout, markdown, and tables</strong>, it's <strong>multilingual</strong>, Apache-2.0, and has first-class fine-tuning support. A directly comparable case — fine-tuning DeepSeek-OCR on a 200K Persian dataset — cut Character Error Rate by <strong>~88%</strong> (149% → 61%) in just 60 training steps. Khmer is a harder script than Persian, but the recipe transfers.</p>
+        <p style="margin-bottom:0"><strong>The one thing to change in your plan:</strong> don't think of it as "scrape an OCR dataset." Scraping gives you <em>text</em>, not image-text pairs. The winning move for every low-resource OCR effort (Arabic SARD, NVIDIA Nemotron, SynthOCR-Gen) is <strong>scrape a clean text corpus, then render it synthetically</strong> into document images. That gives you perfect, free ground truth — including layout boxes — and makes font-agnostic training automatic.</p>
+      </div>
+    </section>
+
+    <!-- 1 BASE MODEL -->
+    <section id="basemodel">
+      <h2><span class="num">1</span>DeepSeek-OCR-2 as your base</h2>
+      <p>DeepSeek-OCR-2 (released 27 Jan 2026) is a 3B-parameter vision-language model. Its predecessor introduced "contexts optical compression" — rendering text to images and encoding them into very few vision tokens — and v2 adds <strong>DeepEncoder V2 with a "visual causal flow" / human-like reading order</strong>, which is exactly what you want for layout-aware reading.</p>
+
+      <div class="tbl-card">
+        <table>
+          <tr><th>Property</th><th>Detail</th><th>Why it matters for you</th></tr>
+          <tr><td>Size</td><td>3B params, BF16</td><td>Fine-tunable on a single 24–48 GB GPU with LoRA</td></tr>
+          <tr><td>Architecture</td><td>DeepEncoder (SAM-base windowed attn → 16× conv compressor → CLIP-large global attn) → 3B MoE decoder</td><td>High-res input, few tokens; reading-order aware</td></tr>
+          <tr><td>Layout output</td><td>Grounding mode + markdown + tables + bounding boxes</td><td>Your "structured layout output" is native, not bolted on</td></tr>
+          <tr><td>Languages</td><td>Multilingual (no explicit Khmer guarantee)</td><td>Expect weak zero-shot Khmer → fine-tuning is the job</td></tr>
+          <tr><td>License</td><td>Apache-2.0</td><td>Commercial use, no strings</td></tr>
+          <tr><td>Run / serve</td><td>Transformers, vLLM, SGLang, Docker</td><td>Easy to stand up an eval + serving loop</td></tr>
+          <tr><td>Fine-tune</td><td>Unsloth (LoRA): ~1.4× faster, ~40% less VRAM; free Colab notebook</td><td>Low barrier to your first training run</td></tr>
+        </table>
+      </div>
+
+      <div class="callout c-key">
+        <span class="tag">Key prompts to know</span>
+        Layout/structure: <code class="km">&lt;image&gt;\n&lt;|grounding|&gt;Convert the document to markdown.</code> &nbsp;·&nbsp; Plain text: <code>&lt;image&gt;\nFree OCR.</code> — you will fine-tune against these same prompt formats so the model only has to learn <em>Khmer recognition</em>, not a new output convention.
+      </div>
+
+      <div class="callout c-warn">
+        <span class="tag">Verify before you commit</span>
+        Check the <strong>tokenizer's Khmer coverage</strong> first. Run a few hundred Khmer sentences through it and measure tokens-per-character ("fertility"). If Khmer fragments into excessive byte-fallback tokens, decoding long pages gets expensive and accuracy suffers — that's a signal you may need more training data or tokenizer attention. Also run a <strong>zero-shot baseline</strong> on real Khmer pages before any training so you know your starting CER/WER.
+      </div>
+    </section>
+
+    <!-- 2 REFRAME -->
+    <section id="reframe">
+      <h2><span class="num">2</span>Reframing the dataset strategy</h2>
+      <p>Your instinct to build the dataset yourself is correct — Khmer is low-resource and you'll need data nobody else has. But the framing matters enormously:</p>
+
+      <div class="grid2">
+        <div class="mini">
+          <h4>❌ "Scrape an OCR dataset"</h4>
+          <p>Scraping Khmer news yields HTML text. To turn that into OCR training data you'd have to <em>find or photograph</em> matching images and hand-label them — slow, expensive, and you can't control layout.</p>
+        </div>
+        <div class="mini">
+          <h4>✅ "Scrape a corpus, render it"</h4>
+          <p>Scraping yields a clean <strong>text corpus</strong>. You then <strong>render</strong> it into document images with a layout engine. Ground truth (text + boxes + structure) is generated <em>for free and perfectly</em>.</p>
+        </div>
+      </div>
+
+      <p>This synthetic-first recipe is how every recent low-resource and multilingual OCR system was built: <strong>SynthOCR-Gen</strong> is a whole generator for exactly this (Unicode normalization, script-purity enforcement, multi-font rendering, 25+ degradation augmentations); <strong>NVIDIA Nemotron OCR v2</strong> trained on 12M synthetic images across six languages; the <strong>SARD</strong> Arabic dataset rendered 843K book-style pages (690M words) across 10 fonts. Synthetic data is what makes the model font- and layout-invariant.</p>
+
+      <div class="callout c-good">
+        <span class="tag">The payoff</span>
+        Because you control the renderer, every synthetic page comes with <strong>exact bounding boxes and structure tags</strong> — so you can train DeepSeek-OCR-2's grounding mode directly. No manual box-drawing. Scraping still matters, but its job is <em>text diversity</em>, not images.
+      </div>
+    </section>
+
+    <hr>
+
+    <!-- 3 KHMER TRAPS -->
+    <section id="khmer">
+      <h2><span class="num">3</span>Khmer-specific traps that will silently wreck your labels</h2>
+      <p>Khmer is one of the harder scripts for OCR — large character set, stacked/subscript consonants (<span class="km">coeng</span> ◌្), vowels that attach above/below/around the base, complex syllable clusters, and <strong>no spaces between words</strong>. These create two failure modes most people miss:</p>
+
+      <h3>Trap A — Unicode normalization &amp; ordering</h3>
+      <p>The same visible Khmer syllable can be encoded with characters in different orders. If your corpus contains malformed or inconsistently ordered sequences, your "ground truth" labels are wrong before training even starts — and the model learns garbage. You must run <strong>Khmer canonical normalization / script-purity enforcement</strong> on every scraped string (drop non-Khmer noise, fix coeng+vowel ordering, NFC). This is the single highest-leverage data-quality step.</p>
+
+      <h3>Trap B — Text shaping at render time</h3>
+      <p>Khmer needs <strong>complex text layout (glyph reordering + ligatures)</strong> to render correctly. Naïve renderers (e.g. plain Pillow <code>ImageDraw.text</code>) do <em>not</em> shape Khmer — subscripts land in the wrong place and your image won't match your label. You must render through a <strong>HarfBuzz-based shaper</strong>: Pillow built with <code>libraqm</code>, or Pango/Cairo, or an HTML→image path (Playwright / wkhtmltoimage) which uses the browser's shaper.</p>
+
+      <div class="callout c-risk">
+        <span class="tag">Build this guard first</span>
+        Render a sample, OCR-free, then <strong>round-trip check</strong>: re-extract text from your rendered image's source string and diff. Better: visually QA a sample grid across all fonts. A shaping bug produces images that look "almost right" but teach the model wrong glyph order — and you won't catch it in the loss curve, only in real-world failure.
+      </div>
+
+      <h3>Trap C — Word boxes are ambiguous</h3>
+      <p>With no inter-word spaces, "word-level" bounding boxes aren't well-defined in Khmer. Decide your granularity up front: <strong>line-level boxes</strong> (recommended, robust) or grapheme-cluster boxes. Don't promise word boxes you can't reliably generate. (If you ever need word segmentation, <span class="km">khPOS</span> and CRF segmenters exist — see §9.)</p>
+    </section>
+
+    <!-- 4 FONTS -->
+    <section id="fonts">
+      <h2><span class="num">4</span>Font-agnostic, done right</h2>
+      <p>Your font-swapping idea is exactly right — it's the primary lever for generalization. Research on 19 Khmer fonts with Tesseract shows accuracy swings wildly by font:</p>
+      <div class="grid2">
+        <div class="mini">
+          <h4>✅ Easy fonts</h4>
+          <p><span class="km">Battambang, Khmer OS, Siemreap, Odor MeanChey, Sithi Manuss</span> — CER ~0.01.</p>
+        </div>
+        <div class="mini">
+          <h4>⚠️ Hard fonts</h4>
+          <p><span class="km">Dangrek</span> (CER 0.29), <span class="km">iSeth First</span> (0.23), <span class="km">Bayon</span> (0.21) — decorative / unusual shaping.</p>
+        </div>
+      </div>
+      <p>Practical rules for the render set:</p>
+      <ul>
+        <li><strong>Deliberately over-sample the hard fonts.</strong> They're where OCR fails, so they're where training signal is most valuable. Don't just train on the pretty ones.</li>
+        <li><strong>Validate glyph coverage per font.</strong> Many Khmer fonts don't support every subscript/diacritic and will render <code>.notdef</code> boxes (□). Programmatically check each font covers your character set before including it; otherwise you inject more bad labels.</li>
+        <li><strong>Randomize aggressively:</strong> font, size, weight, line spacing, color, background, slight rotation/skew, blur, JPEG artifacts, paper texture, lighting — this "domain randomization" is what closes the synthetic→real gap.</li>
+        <li><strong>Mix in handwriting later.</strong> Printed first; if you need photos/handwritten, the historical <span class="km">Sleuk Rith</span> palm-leaf data and the KhmerST scene-text benchmark exist as references.</li>
+      </ul>
+    </section>
+
+    <!-- 5 LAYOUT -->
+    <section id="layout">
+      <h2><span class="num">5</span>Defining "structured layout output"</h2>
+      <p>This is a design decision to lock down on day one, because it determines your label format. The strongest path is to <strong>emit in DeepSeek-OCR-2's native grounding format</strong> so fine-tuning teaches Khmer recognition, not a new output schema. Decide what structure you actually need:</p>
+      <div class="tbl-card">
+        <table>
+          <tr><th>Target</th><th>Output shape</th><th>Use when</th></tr>
+          <tr><td>Reading-order text</td><td>Plain UTF-8, correct order</td><td>Search, TTS, translation feed</td></tr>
+          <tr><td>Markdown</td><td>Headings, lists, <strong>tables</strong>, bold</td><td>Document reconstruction / RAG</td></tr>
+          <tr><td>Grounded layout</td><td>Blocks + bounding boxes + type tag</td><td>You need <em>where</em> + <em>what</em> (forms, invoices, IDs)</td></tr>
+          <tr><td>JSON tree</td><td>Nested blocks: title/para/table/figure</td><td>Downstream programmatic consumption</td></tr>
+        </table>
+      </div>
+      <div class="callout c-key">
+        <span class="tag">Recommendation</span>
+        Generate ground truth as <strong>grounded markdown</strong> (DeepSeek's <code>&lt;|grounding|&gt;</code> format: markdown text interleaved with normalized bounding boxes + block types). It covers reading order, tables, and spatial layout in one representation, and matches the model's pre-training so fine-tuning converges fast. If a consumer needs JSON, post-process the markdown+boxes — don't make the model learn two formats.
+      </div>
+    </section>
+
+    <!-- 6 PIPELINE -->
+    <section id="pipeline">
+      <h2><span class="num">6</span>The data pipeline, end to end</h2>
+      <div class="flow">
+        <div class="step"><div class="n">01</div><div class="t">Scrape</div><div class="d">Khmer news, wiki, gov, books</div></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">02</div><div class="t">Clean &amp; normalize</div><div class="d">Script purity · NFC · dedup</div></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">03</div><div class="t">Lay out</div><div class="d">Templates: articles, tables, forms</div></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">04</div><div class="t">Render + shape</div><div class="d">HarfBuzz · multi-font · boxes</div></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">05</div><div class="t">Augment</div><div class="d">Noise · skew · scan artifacts</div></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">06</div><div class="t">Pair</div><div class="d">image ↔ grounded markdown</div></div>
+      </div>
+      <p>Steps 03–06 are deterministic code you write once; the corpus from 01–02 feeds it indefinitely. Aim for a generator that produces <strong>(image, prompt, target)</strong> triples in the exact shape Unsloth/Transformers expects for DeepSeek-OCR-2 fine-tuning.</p>
+    </section>
+
+    <!-- 7 ROADMAP -->
+    <section id="roadmap">
+      <h2><span class="num">7</span>Phased roadmap</h2>
+
+      <div class="phase">
+        <div class="rail"><div class="bubble">0</div></div>
+        <div class="body">
+          <div class="when">Week 1 · Foundations</div>
+          <h3>Define output schema + build a real eval set</h3>
+          <p>Lock the grounded-markdown format. Collect <strong>200–500 real Khmer pages</strong> (news scans, photos, PDFs) and hand-correct them. This is your North Star — without a real held-out set you cannot tell if you're improving. Run DeepSeek-OCR-2 <strong>zero-shot</strong> on it to record the baseline CER/WER/TEDS.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="rail"><div class="bubble">1</div></div>
+        <div class="body">
+          <div class="when">Weeks 2–3 · Corpus</div>
+          <h3>Collect &amp; clean the text corpus</h3>
+          <p>Bootstrap from existing open Khmer corpora (§9), then scrape news/blogs for domain and vocabulary breadth. Normalize (script purity, NFC, coeng ordering), dedup, and filter. Respect <code>robots.txt</code>, rate-limit, and prefer permissively-licensed sources (see §10).</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="rail"><div class="bubble">2</div></div>
+        <div class="body">
+          <div class="when">Weeks 3–5 · Synthesis</div>
+          <h3>Build the rendering pipeline</h3>
+          <p>HarfBuzz-shaped, multi-font rendering with layout templates and auto-generated boxes. Start with <strong>~50–100K pages</strong>; scale to 500K+ once quality is verified. Reuse or fork <strong>SynthOCR-Gen</strong> rather than building from zero. QA a visual grid across all fonts before mass-generating.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="rail"><div class="bubble">3</div></div>
+        <div class="body">
+          <div class="when">Weeks 5–6 · First training</div>
+          <h3>LoRA fine-tune via Unsloth, then iterate</h3>
+          <p>Fine-tune on synthetic data; evaluate against your real set every run. Expect a large CER drop early (cf. Persian: −88% in 60 steps). Diagnose failures by font/layout and feed the renderer to cover the gaps. Tight loop: train → eval → analyze → adjust synthesis.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="rail"><div class="bubble">4</div></div>
+        <div class="body">
+          <div class="when">Weeks 7+ · Close the gap</div>
+          <h3>Add real labeled data &amp; harden</h3>
+          <p>Mix a few thousand real, hand-corrected pages into training to close the synthetic→real gap. Add hard cases: low-quality scans, mixed Khmer/English, tables, ID cards. Consider full fine-tune (not just LoRA) once data is mature. Serve via vLLM.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 STACK -->
+    <section id="stack">
+      <h2><span class="num">8</span>Recommended stack</h2>
+      <p>
+        <span class="pill"><b>Base:</b> DeepSeek-OCR-2 (Apache-2.0)</span>
+        <span class="pill"><b>Fine-tune:</b> Unsloth + LoRA</span>
+        <span class="pill"><b>Serve:</b> vLLM / SGLang</span>
+        <span class="pill"><b>Synthesis:</b> SynthOCR-Gen (fork)</span>
+        <span class="pill"><b>Shaping:</b> HarfBuzz / libraqm / Pango / Playwright</span>
+        <span class="pill"><b>Normalize:</b> Khmer Unicode tooling (seanghay)</span>
+        <span class="pill"><b>Eval:</b> CER/WER + TEDS (tables) + box mAP</span>
+        <span class="pill"><b>Labeling:</b> Label Studio / PPOCRLabel for real set</span>
+      </p>
+      <pre><code># Minimal fine-tune loop (conceptual)
+from unsloth import FastVisionModel
+model, tok = FastVisionModel.from_pretrained("unsloth/DeepSeek-OCR-2",
+                                             load_in_4bit=True)
+model = FastVisionModel.get_peft_model(model)        # LoRA adapters
+# dataset rows: {"image": img, "prompt": "&lt;image&gt;\n&lt;|grounding|&gt;Convert the document to markdown.",
+#                "answer": grounded_markdown_khmer}
+# -> SFTTrainer -> eval on REAL Khmer held-out set -> repeat</code></pre>
+    </section>
+
+    <!-- 9 BOOTSTRAP -->
+    <section id="bootstrap">
+      <h2><span class="num">9</span>Don't start from zero — bootstrap resources</h2>
+      <p>Several Khmer resources already exist; use them to seed your corpus and as references, then scrape to extend coverage.</p>
+      <div class="tbl-card">
+        <table>
+          <tr><th>Resource</th><th>What it is</th><th>Note</th></tr>
+          <tr><td>awesome-khmer-language</td><td>Curated index of Khmer NLP/OCR/TTS resources (seanghay)</td><td>Start here; finds the rest</td></tr>
+          <tr><td>khPOS</td><td>12K sentences, word-segmented + POS tagged</td><td>CC BY-NC-SA — non-commercial</td></tr>
+          <tr><td>khmer-text-data</td><td>News articles + CRF-segmented corpus (phylypo)</td><td>Good clean text seed</td></tr>
+          <tr><td>KhmerST</td><td>Low-resource Khmer scene-text benchmark</td><td>Reference / hard eval cases</td></tr>
+          <tr><td>Sleuk Rith</td><td>Historical handwritten palm-leaf dataset</td><td>For later handwriting work</td></tr>
+          <tr><td>OSCAR / CC / Wikipedia (km)</td><td>Large web Khmer text (CC-licensed)</td><td>Bulk corpus, needs heavy cleaning</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- 10 RISKS -->
+    <section id="risks">
+      <h2><span class="num">10</span>Risks &amp; pitfalls to plan around</h2>
+      <ul>
+        <li><strong>Scraping legality.</strong> Khmer news content is copyrighted. For a <em>text corpus</em> used to train a model this is usually lower-risk, but respect <code>robots.txt</code>, rate-limit, don't redistribute raw articles, and prefer CC-licensed sources (Wikipedia, OSCAR) where possible. If commercializing, get counsel.</li>
+        <li><strong>Silent shaping/normalization bugs.</strong> The deadliest risk (§3): wrong labels that look fine. Build round-trip + visual QA gates before mass generation.</li>
+        <li><strong>Synthetic→real gap.</strong> A model that's perfect on synthetic pages can fail on real photos. Domain randomization + a real fine-tune slice are the fix; your real eval set is how you detect it.</li>
+        <li><strong>Tokenizer fertility on Khmer.</strong> Measure it early; poor coverage inflates sequence length and cost.</li>
+        <li><strong>Over-fitting to easy fonts.</strong> Balance the render mix toward the hard fonts.</li>
+        <li><strong>Layout label ambiguity.</strong> Commit to line-level boxes; don't over-promise word boxes in a space-less script.</li>
+        <li><strong>Eval honesty.</strong> Keep the real eval set strictly held out — never let synthetic versions of it leak into training.</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <section id="sources">
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-OCR-2">DeepSeek-OCR-2 model card (Hugging Face)</a> — architecture, modes, running, fine-tune support</li>
+        <li><a href="https://arxiv.org/abs/2510.18234">DeepSeek-OCR: Contexts Optical Compression (arXiv 2510.18234)</a> — DeepEncoder, compression, accuracy</li>
+        <li><a href="https://docs.unsloth.ai/models/deepseek-ocr-how-to-run-and-fine-tune">Unsloth — DeepSeek-OCR run &amp; fine-tune docs</a>; <a href="https://medium.com/@matteo28/how-to-fine-tune-the-new-deepseek-ocr-model-with-unsloth-3964c01f39bd">Persian 200K fine-tune case (−88% CER)</a></li>
+        <li><a href="https://arxiv.org/abs/2601.16113">SynthOCR-Gen: synthetic OCR generator for low-resource languages (arXiv 2601.16113)</a></li>
+        <li><a href="https://huggingface.co/blog/nvidia/nemotron-ocr-v2">NVIDIA Nemotron OCR v2 — 12M synthetic images</a>; <a href="https://arxiv.org/html/2505.24600v1">SARD synthetic Arabic OCR dataset</a></li>
+        <li><a href="https://arxiv.org/abs/2506.23963">Evaluating the Impact of Khmer Font Types on Text Recognition (arXiv 2506.23963)</a> — per-font CER/WER</li>
+        <li><a href="https://arxiv.org/html/2410.18277v1">KhmerST: Low-Resource Khmer Scene Text Benchmark (ACCV 2024)</a></li>
+        <li><a href="https://github.com/seanghay/awesome-khmer-language">awesome-khmer-language</a> · <a href="https://github.com/ye-kyaw-thu/khPOS">khPOS</a> · <a href="https://github.com/phylypo/khmer-text-data">khmer-text-data</a></li>
+      </ul>
+      <p class="footnote">Notes drawn from web research on 27 May 2026. Model availability, version numbers, and dataset licenses change — re-verify before relying on any single figure.</p>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

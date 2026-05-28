@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="km">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: 'RenderFont';
+    src: url(data:font/ttf;base64,{{ font_b64 }});
+  }
+  html, body { margin: 0; padding: 0; background: {{ bg }}; }
+  #page {
+    width: {{ width }}px;
+    box-sizing: border-box;
+    margin: 0 auto;
+    padding: {{ margin }}px;
+    background: {{ page_bg }};
+    font-family: 'RenderFont', sans-serif;
+    font-size: {{ body_px }}px;
+    line-height: {{ line_height }};
+    letter-spacing: {{ letter_spacing }}px;
+    color: {{ color }};
+    text-align: {{ align }};
+    {% if columns > 1 %}column-count: {{ columns }}; column-gap: 36px;{% endif %}
+  }
+  h1 { font-size: {{ title_px }}px; line-height: 1.3; margin: 0 0 .5em; {% if columns > 1 %}column-span: all;{% endif %} }
+  h2 { font-size: {{ header_px }}px; line-height: 1.3; margin: .8em 0 .3em; }
+  p  { margin: 0 0 .8em; }
+  ul { margin: 0 0 .8em 1.2em; padding: 0; }
+  li { margin: .2em 0; }
+  .byline { font-size: {{ (body_px * 0.8) | round | int }}px; color: #555; margin: 0 0 1em; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 1em; {% if columns > 1 %}column-span: all;{% endif %} }
+  th, td { border: 1px solid #888; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { font-weight: 700; background: #f0f0f0; }
+  .form-row { display: flex; gap: 14px; margin: .35em 0; align-items: baseline; }
+  .form-label { font-weight: 700; min-width: 35%; }
+  .form-value { flex: 1; border-bottom: 1px dotted #aaa; }
+</style>
+</head>
+<body>
+<div id="page">
+{% for b in blocks %}
+  {% if b.type == 'title' %}
+    <h1 data-block-type="title">{{ b.text }}</h1>
+  {% elif b.type == 'byline' %}
+    <p class="byline" data-block-type="caption">{{ b.text }}</p>
+  {% elif b.type == 'section_header' %}
+    <h2 data-block-type="section_header">{{ b.text }}</h2>
+  {% elif b.type == 'text' %}
+    <p data-block-type="text">{{ b.text }}</p>
+  {% elif b.type == 'list' %}
+    <ul>{% for it in b['items'] %}<li data-block-type="list_item">{{ it }}</li>{% endfor %}</ul>
+  {% elif b.type == 'table' %}
+    <table>
+      {% if b.header %}<tr>{% for h in b.header %}<th data-block-type="table_cell" data-tbl="{{ b.tid }}" data-row="0" data-col="{{ loop.index0 }}">{{ h }}</th>{% endfor %}</tr>{% endif %}
+      {% for row in b.rows %}<tr>{% for c in row %}<td data-block-type="table_cell" data-tbl="{{ b.tid }}" data-row="{{ loop.index }}" data-col="{{ loop.index0 }}">{{ c }}</td>{% endfor %}</tr>{% endfor %}
+    </table>
+  {% elif b.type == 'form' %}
+    {% for f in b.fields %}<div class="form-row"><span class="form-label" data-block-type="form_label">{{ f.label }}</span><span class="form-value" data-block-type="form_value">{{ f.value }}</span></div>{% endfor %}
+  {% endif %}
+{% endfor %}
+</div>
+</body>
+</html>
