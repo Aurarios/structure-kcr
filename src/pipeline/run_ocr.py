@@ -74,8 +74,25 @@ def _recognize(rec, enc, crops, device, batch=64):
     return texts
 
 
+def normalize_dpi(pil_img, target_width: int = 2400):
+    """Upscale a low-DPI input so text lines match the recognizer's training scale.
+
+    The recognizer trained on crops DOWNSCALED to 48px from high-DPI (dsf=2, ~2480px-wide) renders.
+    A small/low-DPI scan has ~25px lines that get UPSCALED to 48px (blurry) -> out of distribution.
+    Upscaling the page to ~training width makes crops get downscaled like training -> the model reads
+    it. This was the dominant real-document failure cause (verified by experiment).
+    """
+    from PIL import Image as _Image
+    w, h = pil_img.size
+    if w >= target_width:
+        return pil_img
+    nh = int(h * target_width / w)
+    return pil_img.resize((target_width, nh), _Image.LANCZOS)
+
+
 @torch.no_grad()
 def run_ocr(pil_img, det, rec, enc, det_cfg, device, merge_blocks=True):
+    pil_img = normalize_dpi(pil_img, det_cfg.get("upscale_width", 2400))
     boxes = detect_page(det, pil_img, det_cfg.get("image_size", 960), device, det_cfg)
     img_bgr = cv2.cvtColor(np.asarray(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
     crops, valid = _prep_crops(img_bgr, boxes)
@@ -93,6 +110,8 @@ def main() -> None:
     ap.add_argument("--det-profile", default="single")
     ap.add_argument("--rec-profile", default="single")
     ap.add_argument("--det-size", type=int, default=960)
+    ap.add_argument("--upscale-width", type=int, default=2400,
+                    help="upscale inputs narrower than this to match training DPI (0 disables)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -100,7 +119,8 @@ def main() -> None:
     det, rec, enc = load_models(args.det_ckpt, args.rec_ckpt, args.det_profile,
                                 args.rec_profile, args.device)
     det_cfg = {"image_size": args.det_size, "prob_thresh": 0.3,
-               "box_unclip_ratio": 2.0, "min_box_size": 4, "min_confidence": 0.5}
+               "box_unclip_ratio": 2.0, "min_box_size": 4, "min_confidence": 0.5,
+               "upscale_width": args.upscale_width}
     img = Image.open(args.image)
     res = run_ocr(img, det, rec, enc, det_cfg, args.device)
     print("=" * 60); print(f"ASSEMBLED ({len(res['block_units'])} blocks, "
