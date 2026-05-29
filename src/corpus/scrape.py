@@ -2,11 +2,12 @@
 
 Etiquette is mandatory: robots.txt is always honored, requests are rate-limited per host, and we
 store extracted text only (never redistribute raw articles). Each `scrape`-typed source in
-sources.yaml lists seed RSS/index URLs; we expand them to article URLs and extract main text with
-trafilatura.
+sources.yaml lists seed URLs; we auto-detect each seed as RSS/Atom, sitemap, or sitemap-index and
+expand it to article URLs, then extract main text with trafilatura.
 """
 from __future__ import annotations
 
+import re
 import time
 import urllib.robotparser
 import xml.etree.ElementTree as ET
@@ -49,6 +50,15 @@ def _get(url: str, timeout: int = 20) -> str | None:
     return None
 
 
+def _root_tag(xml_text: str) -> str | None:
+    """Return lowercased local-name of the root element, or None if not parseable XML."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    return root.tag.split("}")[-1].lower()
+
+
 def _rss_links(feed_xml: str) -> list[str]:
     """Extract item/entry links from an RSS or Atom feed."""
     links: list[str] = []
@@ -56,7 +66,6 @@ def _rss_links(feed_xml: str) -> list[str]:
         root = ET.fromstring(feed_xml)
     except ET.ParseError:
         return links
-    # RSS: channel/item/link ; Atom: entry/link[@href]
     for item in root.iter():
         tag = item.tag.split("}")[-1]
         if tag == "item":
@@ -71,11 +80,75 @@ def _rss_links(feed_xml: str) -> list[str]:
     return links
 
 
+def _sitemap_locs(xml_text: str) -> list[str]:
+    """Extract <loc> URLs from a <urlset> or <sitemapindex> document."""
+    locs: list[str] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return locs
+    for el in root.iter():
+        if el.tag.split("}")[-1] == "loc" and el.text:
+            locs.append(el.text.strip())
+    return locs
+
+
+def _expand_seed(
+    seed: str,
+    rate: float,
+    max_sitemaps: int,
+    url_filter: re.Pattern | None,
+) -> list[str]:
+    """Resolve a seed URL into a list of article URLs.
+
+    Auto-detects rss/atom vs sitemap vs sitemapindex by the XML root tag. Sitemap indexes are
+    expanded one level deep, capped by `max_sitemaps`.
+    """
+    body = _get(seed)
+    time.sleep(rate)
+    if not body:
+        print(f"[scrape] could not fetch seed {seed}")
+        return []
+    root = _root_tag(body)
+    if root in ("rss", "feed"):
+        urls = _rss_links(body)
+    elif root == "urlset":
+        urls = _sitemap_locs(body)
+    elif root == "sitemapindex":
+        children = _sitemap_locs(body)[:max_sitemaps]
+        print(f"[scrape] sitemap-index {seed}: expanding {len(children)} child sitemaps")
+        urls = []
+        for child in children:
+            if not _allowed(child):
+                continue
+            sub = _get(child)
+            time.sleep(rate)
+            if not sub:
+                continue
+            urls.extend(_sitemap_locs(sub))
+    else:
+        print(f"[scrape] seed {seed}: unknown XML root {root!r}, skipping")
+        return []
+    if url_filter is not None:
+        urls = [u for u in urls if url_filter.search(u)]
+    # de-dup, preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def scrape_source(src: dict[str, Any], limit: int | None = None) -> int:
     name = src["name"]
     seeds: Iterable[str] = src.get("seeds", [])
     rate = float(src.get("rate_limit_seconds", 2.0))
     max_per_seed = int(src.get("max_pages_per_seed", 200))
+    max_sitemaps = int(src.get("max_sitemaps", 50))
+    url_filter_pat = src.get("url_filter")
+    url_filter = re.compile(url_filter_pat) if url_filter_pat else None
     written = 0
 
     with ShardWriter(RAW_DIR, name) as w:
@@ -83,12 +156,7 @@ def scrape_source(src: dict[str, Any], limit: int | None = None) -> int:
             if not _allowed(seed):
                 print(f"[scrape] {name}: robots.txt disallows {seed}, skipping")
                 continue
-            feed = _get(seed)
-            time.sleep(rate)
-            if not feed:
-                print(f"[scrape] {name}: could not fetch seed {seed}")
-                continue
-            article_urls = _rss_links(feed)[:max_per_seed]
+            article_urls = _expand_seed(seed, rate, max_sitemaps, url_filter)[:max_per_seed]
             print(f"[scrape] {name}: {len(article_urls)} article links from {seed}")
             for url in tqdm(article_urls, desc=name, unit="art"):
                 if not _allowed(url):
@@ -115,7 +183,6 @@ def _extract_main(html: str, url: str) -> str | None:
         text = trafilatura.extract(html, url=url, favor_recall=True)
         return text.strip() if text else None
     except Exception:
-        # fallback: strip tags with BeautifulSoup
         try:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "lxml")

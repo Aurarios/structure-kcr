@@ -1,0 +1,51 @@
+# Training profile: --parallel
+# Target hardware: 3x NVIDIA RTX A5000 (24 GB VRAM each) with DDP
+# Launch with: accelerate launch --multi_gpu --num_processes 3 -m src.train.train --parallel
+# Model: ~250M params, 1280px square input
+
+profile: parallel
+seed: 42
+
+# data
+manifests:
+  train: data/manifests/train.jsonl
+  val:   data/manifests/val.jsonl
+image_size: [1536, 1024]    # H, W (portrait; less padding than square for tall pages)
+max_label_len: 1536
+
+# tokenizer
+tokenizer_model: data/tokenizer/khmer_ocr.model
+
+# optimization
+batch_size_per_device: 4    # per GPU; global = 4 * 3 = 12
+grad_accum_steps: 4         # effective batch = 48
+num_workers: 6
+
+epochs: 3
+optimizer:
+  type: adamw
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.95]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+label_smoothing: 0.1
+gradient_clip_norm: 1.0
+
+# precision / memory
+mixed_precision: bf16
+gradient_checkpointing: true
+
+# eval / checkpoint
+eval_every_steps: 1000
+save_every_steps: 2500
+ckpt_dir: data/checkpoints/parallel
+keep_last_n_ckpts: 3
+# generation-eval runs only on the main process; with batch=1 generate, keep N modest.
+gen_eval_samples: 32
+gen_eval_samples_final: 128
+gen_eval_max_new_tokens: 1536
+
+# logging
+log_every_steps: 25

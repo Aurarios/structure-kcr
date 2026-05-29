@@ -85,7 +85,7 @@ sources:
     url: https://downloads.wortschatz-leipzig.de/corpora/khm_news_2020_100K.tar.gz
     parser: leipzig_sentences
     license: "CC BY 4.0 (Leipzig Corpora Collection)"
-    enabled: true
+    enabled: false               # URL returns 404 (2026-05); needs an updated Leipzig snapshot URL
 
   # ---------- Khmer-specific repositories ----------
   - name: khpos
@@ -94,7 +94,7 @@ sources:
     text_field: text
     license: "CC BY-NC-SA 4.0"   # NON-COMMERCIAL — flagged
     non_commercial: true
-    enabled: true
+    enabled: false               # script-based dataset: unsupported in datasets>=4
 
   - name: phylypo_khmer_text
     type: scrape
@@ -111,6 +111,8 @@ sources:
     enabled: false
 
   # ---------- Targeted scrape (news / gov / literary) ----------
+  # The scraper auto-detects each seed as RSS/Atom, sitemap (<urlset>), or sitemap-index
+  # (<sitemapindex>). robots.txt is always honored; per-host rate limiting is enforced.
   - name: news_rss
     type: scrape
     seeds:
@@ -122,3 +124,27 @@ sources:
     rate_limit_seconds: 2.0
     max_pages_per_seed: 500
     enabled: false               # enable after reviewing each site's robots.txt/ToS
+
+  - name: rfa_khmer
+    type: scrape
+    seeds:
+      - https://rfa.org/arc/outboundfeeds/khmer/sitemap-index/?outputType=xml  # sitemap-index (historical)
+      - https://www.rfa.org/khmer/rss2.xml                                      # RSS (recent)
+    url_filter: "/khmer/"        # only article URLs containing this path
+    rate_limit_seconds: 1.5
+    max_pages_per_seed: 5000
+    max_sitemaps: 60             # how many child sitemaps to expand from a sitemap-index
+    license: "© RFA / USAGM — US-government-funded; may be reproduced with credit"
+    enabled: true
+
+  - name: rfi_khmer
+    type: scrape
+    seeds:
+      - https://www.rfi.fr/km/rss
+      - https://www.rfi.fr/sitemap.xml
+    url_filter: "/km/"
+    rate_limit_seconds: 2.0
+    max_pages_per_seed: 5000
+    max_sitemaps: 60
+    license: "© RFI / France Médias Monde — copyrighted; research/TDM use only, not redistributed"
+    enabled: false               # robots.txt disallows /km/rss and /sitemap.xml for crawlers

@@ -80,7 +80,8 @@ def package(max_docs: int | None, permissive_only: bool) -> dict:
         "per_source_chars": dict(chars_per_source),
         "per_license_docs": dict(per_license),
     }
-    (LM_DIR / "dataset_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2))
+    (LM_DIR / "dataset_stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_card(stats)
     return stats
 

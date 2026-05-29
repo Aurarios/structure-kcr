@@ -1,0 +1,13 @@
+# Training dependencies (separate from pipeline reqs).
+# Install with: pip install -r requirements-train.txt
+# Both --single (4070 Ti) and --parallel (3x A5000) training paths use these.
+
+# --- training ---
+torch>=2.3                # CUDA build matched to driver/CUDA on each box
+transformers>=4.42        # VisionEncoderDecoderModel, Swin, BART decoder
+sentencepiece>=0.2.0      # tokenizer
+accelerate>=0.31          # DDP launcher / device placement helpers
+safetensors>=0.4
+
+# --- training utils ---
+einops>=0.7

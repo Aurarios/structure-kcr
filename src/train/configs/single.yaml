@@ -1,0 +1,51 @@
+# Training profile: --single
+# Target hardware: 1x NVIDIA RTX 4070 Ti (12 GB VRAM)
+# Model: ~50M params, 768px square input
+
+profile: single
+seed: 42
+
+# data
+manifests:
+  train: data/manifests/train.jsonl
+  val:   data/manifests/val.jsonl
+image_size: [1024, 768]     # H, W (letterboxed; portrait to match doc aspect, median h/w=1.23)
+max_label_len: 1024
+
+# tokenizer
+tokenizer_model: data/tokenizer/khmer_ocr.model
+
+# optimization
+batch_size_per_device: 4
+grad_accum_steps: 4         # effective batch = 16 (same as before)
+num_workers: 4              # DataLoader workers
+
+epochs: 10
+optimizer:
+  type: adamw
+  lr: 3.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.95]
+scheduler:
+  type: cosine
+  warmup_steps: 1000
+label_smoothing: 0.1
+gradient_clip_norm: 1.0
+
+# precision / memory
+mixed_precision: bf16       # 4070 Ti supports bf16 natively
+gradient_checkpointing: false  # 4.4/12 GB used at b=2+ckpt; with 7.6GB headroom we can afford the activations
+
+# eval / checkpoint
+eval_every_steps: 2000
+save_every_steps: 21875      # ~= steps_per_epoch (332k pages / batch 4 / accum 4) -> 1 save/epoch
+ckpt_dir: data/checkpoints/single
+keep_last_n_ckpts: 15        # keep all 10 epoch-end ckpts + buffer for resume safety
+# generation-eval: decode N val pages and report CER + syllable-ER + box P/R/F1.
+# Slow (autoregressive, batch=1), so keep N small during training; bump for the final pass.
+gen_eval_samples: 16
+gen_eval_samples_final: 64
+gen_eval_max_new_tokens: 1024
+
+# logging
+log_every_steps: 50

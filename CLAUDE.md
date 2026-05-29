@@ -4,16 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-A **dataset-preparation pipeline** for Khmer OCR. It produces two deliverables, both on this Mac (CPU only):
+A **Khmer OCR project** with three deliverables, all in this repo:
 
 1. **Khmer LM text corpus** (`data/corpus/lm_corpus/`) — broadly sourced, normalized, deduped,
    quality-filtered, license-tracked. Reusable to train a future Khmer LLM, and the text source for #2.
 2. **Structured-layout OCR dataset** (`data/synthetic/` + `data/manifests/`) — synthetic document
-   images with **grounded-markdown** labels in DeepSeek-OCR-2's `<|grounding|>` format, for fine-tuning.
+   images with **grounded-markdown** labels in DeepSeek-OCR-2's `<|grounding|>` format.
+3. **From-scratch Khmer OCR model** (`src/train/`) — a Swin + BART encoder-decoder trained on the
+   synthetic dataset above, with two profiles selected by CLI flag:
+   - `--single` → ~50M params, 768px input, targets the **local NVIDIA RTX 4070 Ti (12 GB)**
+   - `--parallel` → ~250M params, 1280px input, targets the **A5000 box (3× 24 GB) via DDP**
 
-**Training/fine-tuning is explicitly OUT OF SCOPE here** — it happens later on a separate Linux box
-(3× A5000). There is no GPU on this machine; don't add training code. `khmer-ocr-findings.html` is the
-research writeup behind the design decisions.
+`khmer-ocr-findings.html` is the research writeup behind the design decisions.
 
 ## Environment & commands
 
@@ -46,6 +48,17 @@ pip install -r requirements.txt && python -m playwright install chromium
 ./.venv/bin/python -m src.validate.stats_report      # font/template/blocktype distributions
 ./.venv/bin/python -m src.validate.visual_qa         # -> data/manifests/contact_sheet.html (human eyeball)
 ./.venv/bin/python -m src.khmer_utils                # self-test the Khmer normalizer
+
+# --- Training (NEW: now in scope; has its own deps file) ---
+pip install -r requirements-train.txt
+./.venv/bin/python -m src.train.tokenizer.prepare_corpus --english-mb 50  # builds data/tokenizer/train_text.txt
+./.venv/bin/python -m src.train.tokenizer.train_tokenizer                  # -> data/tokenizer/khmer_ocr.model
+./.venv/bin/python -m src.train.train --single                              # local 4070 Ti (~50M model, 768px)
+accelerate launch --multi_gpu --num_processes 3 -m src.train.train --parallel  # A5000 box (~250M, 1280px, DDP)
+
+# --- Inference / evaluation on a trained checkpoint ---
+./.venv/bin/python -m src.train.eval.predict --ckpt data/checkpoints/single/step_NNNNNNN --image PATH
+./.venv/bin/python -m src.train.eval.predict --ckpt ... --image PATH --label PATH  # also prints CER + IoU
 ```
 
 There is **no test framework**; correctness is verified by the validation gates above (they run over the
@@ -53,13 +66,15 @@ generated labels) and by the `--smoke`/`--n 8` small runs.
 
 ## Architecture (the big picture)
 
-Two pipelines joined by `data/corpus/lm_corpus/`:
+Three pipelines, each feeding the next:
 
 ```
 sources.yaml ─▶ registry.py ─▶ fetch_hf / fetch_dumps / scrape ─▶ raw/
    ─▶ clean_normalize ─▶ dedup ─▶ quality_filter ─▶ package_lm ─▶ lm_corpus/   [LM dataset]
 lm_corpus/ ─▶ layout_sampler (text) + fonts/ + layouts.yaml
    ─▶ render_playwright ─▶ augment ─▶ to_grounded_markdown ─▶ synthetic/ + manifests/   [OCR dataset]
+lm_corpus/ + manifests/ + special tokens ─▶ src/train/tokenizer ─▶ data/tokenizer/khmer_ocr.model
+   ─▶ src/train/train.py {--single | --parallel} ─▶ data/checkpoints/                    [OCR model]
 ```
 
 - **Everything is config-driven** by `config/*.yaml` (`sources`, `fonts`, `layouts`, `augment`). Change
@@ -87,6 +102,14 @@ lm_corpus/ ─▶ layout_sampler (text) + fonts/ + layouts.yaml
   Unicode-ordering bugs and text loss (fed-in text must equal text decoded from the label after
   normalize); `visual_qa` catches **shaping bugs and `.notdef` boxes** that loss curves never reveal.
   Run both before any large generation.
+- **Training (`src/train/`) is a Swin + BART encoder-decoder, random init**, built via HF
+  `VisionEncoderDecoderModel` for layer plumbing only — no pretrained weights are loaded. Two YAML
+  profiles (`configs/single.yaml`, `configs/parallel.yaml`) select model size, image size, and batch
+  geometry; one `train.py` runs both. `accelerate` handles single-GPU vs DDP transparently.
+- **Tokenizer is SentencePiece Unigram**, vocab 22k, trained on the LM corpus + ~50MB English
+  Wikipedia + literal special tokens. **1000 coord tokens `<0>`..`<999>`** are registered as
+  `user_defined_symbols` so each `bbox_norm` coordinate (already in `[0,999]` from
+  `_normalize_leaves`) tokenizes to a single id — keeps grounded sequences ~4× shorter.
 
 ## Non-obvious gotchas (these have already bitten)
 
@@ -94,9 +117,9 @@ lm_corpus/ ─▶ layout_sampler (text) + fonts/ + layouts.yaml
   OSCAR-2301) **cannot load** — only Parquet sources work (FineWeb-2 `khm_Khmr`, Glot500 `khm_Khmr`,
   `wikimedia/wikipedia`). Gated sets (OSCAR, CulturaX) need `huggingface-cli login`. `sources.yaml`
   records which are disabled and why.
-- **Disk is the binding constraint** (this machine runs ~10 GiB free). Always render as **JPEG with
-  `--dsf 1`** (PNG at dsf=2 is ~10× larger) and keep the `--min-free-gb` guard, which hard-stops
-  generation before filling the disk.
+- **Disk discipline matters** (image avg ~430 KB at jpg q85 dsf=1; a 300k render is ~130 GB).
+  Always render as **JPEG with `--dsf 1`** (PNG at dsf=2 is ~10× larger) and keep the
+  `--min-free-gb` guard, which hard-stops generation before filling the disk.
 - **Launching long background jobs:** run the script *as* the background command (e.g.
   `./run_render.sh > log 2>&1`). Do **not** `nohup … &` *inside* a backgrounded launcher — the detached
   child gets reaped when the launcher task completes. Set `PYTHONUNBUFFERED=1` or logs won't flush.
