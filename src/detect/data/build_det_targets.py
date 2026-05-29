@@ -21,17 +21,37 @@ import numpy as np
 
 Box = tuple[float, float, float, float]
 
+# Region-type taxonomy (index 0 = background). Restores the document structure the flat
+# line-detector dropped: assembly maps these back to markdown (#, ##, -, tables, ...).
+CLASSES = ["background", "title", "section_header", "text", "list_item",
+           "caption", "form_label", "form_value", "table_cell"]
+CLASS_TO_ID = {c: i for i, c in enumerate(CLASSES)}
+NUM_CLASSES = len(CLASSES)
+# block_type values that don't map 1:1 to a class
+_BLOCK_TYPE_ALIAS = {"byline": "caption", "form": "form_value", "list": "list_item",
+                     "table": "table_cell"}
 
-def collect_line_boxes(label: dict[str, Any]) -> list[Box]:
-    """Union of every block's line rectangles (image-pixel space)."""
-    boxes: list[Box] = []
+
+def _class_id(block_type: str | None) -> int:
+    bt = _BLOCK_TYPE_ALIAS.get(block_type or "", block_type or "text")
+    return CLASS_TO_ID.get(bt, CLASS_TO_ID["text"])
+
+
+def collect_line_boxes(label: dict[str, Any], with_class: bool = False):
+    """Union of every block's line rectangles (image-pixel space).
+
+    with_class=False -> list[Box] (back-compat). with_class=True -> list[(Box, class_id)].
+    """
+    out = []
     for blk in label.get("blocks", []):
+        cid = _class_id(blk.get("block_type"))
         for ln in (blk.get("lines") or []):
             if len(ln) == 4:
                 x1, y1, x2, y2 = ln
                 if x2 > x1 and y2 > y1:
-                    boxes.append((float(x1), float(y1), float(x2), float(y2)))
-    return boxes
+                    box = (float(x1), float(y1), float(x2), float(y2))
+                    out.append((box, cid) if with_class else box)
+    return out
 
 
 def _rect_offset(box: Box, shrink_ratio: float) -> float:
@@ -46,20 +66,30 @@ def _rect_offset(box: Box, shrink_ratio: float) -> float:
 
 
 def make_db_targets(
-    boxes: list[Box],
+    boxes,
     height: int,
     width: int,
     shrink_ratio: float = 0.4,
     thresh_min: float = 0.3,
     thresh_max: float = 0.7,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Rasterize DBNet targets at (height, width). Boxes are in that same pixel space."""
+):
+    """Rasterize DBNet targets at (height, width). Boxes are in that same pixel space.
+
+    ``boxes`` may be a list of Box (class-agnostic) or list of (Box, class_id). When classes are
+    given, also returns a class_map (int per pixel, 0=background) for the multi-class head.
+    Returns (prob, prob_mask, thresh, thresh_mask, class_map).
+    """
     prob = np.zeros((height, width), dtype=np.float32)
     prob_mask = np.ones((height, width), dtype=np.float32)
     thresh = np.zeros((height, width), dtype=np.float32)
     thresh_mask = np.zeros((height, width), dtype=np.float32)
+    class_map = np.zeros((height, width), dtype=np.uint8)   # cv2-fillable; <256 classes
 
-    for box in boxes:
+    for item in boxes:
+        if isinstance(item[0], (tuple, list)):
+            box, cid = item[0], int(item[1])
+        else:
+            box, cid = item, 0
         d = _rect_offset(box, shrink_ratio)
         x1, y1, x2, y2 = box
 
@@ -67,8 +97,11 @@ def make_db_targets(
         sx1, sy1 = x1 + d, y1 + d
         sx2, sy2 = x2 - d, y2 - d
         if sx2 - sx1 >= 1 and sy2 - sy1 >= 1:
-            cv2.rectangle(prob, (int(round(sx1)), int(round(sy1))),
-                          (int(round(sx2)), int(round(sy2))), 1.0, thickness=-1)
+            pt1 = (int(round(sx1)), int(round(sy1)))
+            pt2 = (int(round(sx2)), int(round(sy2)))
+            cv2.rectangle(prob, pt1, pt2, 1.0, thickness=-1)
+            if cid > 0:
+                cv2.rectangle(class_map, pt1, pt2, cid, thickness=-1)
 
         # --- threshold band: work on a padded ROI for speed/correctness ---
         pad = int(np.ceil(d)) + 2
@@ -99,4 +132,4 @@ def make_db_targets(
         roi_thresh[upd] = val[upd]
         roi_mask[band] = 1.0
 
-    return prob, prob_mask, thresh, thresh_mask
+    return prob, prob_mask, thresh, thresh_mask, class_map

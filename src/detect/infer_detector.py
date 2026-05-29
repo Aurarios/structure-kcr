@@ -90,24 +90,43 @@ def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
 
 
 @torch.no_grad()
-def detect_page(model, pil_img: Image.Image, size: int, device: str, cfg: dict) -> list[Box]:
-    """Returns line boxes in ORIGINAL image-pixel coordinates."""
+def detect_page(model, pil_img: Image.Image, size: int, device: str, cfg: dict,
+                return_class: bool = False):
+    """Returns line boxes in ORIGINAL image-pixel coordinates.
+
+    return_class=False -> list[Box]. return_class=True -> list[(Box, class_id)], where class_id is
+    the majority region-type predicted inside each box (for structure-aware assembly).
+    """
     arr, scale = letterbox_with_scale(pil_img, size)
     px = torch.from_numpy(arr).permute(2, 0, 1).float().unsqueeze(0) / 255.0
     px = ((px - IMAGENET_MEAN) / IMAGENET_STD).to(device, dtype=next(model.parameters()).dtype)
-    prob = model(px)["prob"][0, 0].float().cpu().numpy()
+    out_m = model(px)
+    prob = out_m["prob"][0, 0].float().cpu().numpy()
+    class_argmax = None
+    if return_class and "class_logits" in out_m:
+        class_argmax = out_m["class_logits"][0].argmax(0).cpu().numpy()   # (size,size) int
     boxes = decode_boxes(prob, cfg.get("prob_thresh", 0.3),
                          cfg.get("box_unclip_ratio", 2.0), cfg.get("min_box_size", 4),
                          cfg.get("edge_margin_frac", 0.18), cfg.get("min_confidence", 0.5),
                          cfg.get("min_area", 40))
     w0, h0 = pil_img.size
-    out: list[Box] = []
+    out = []
     for x1, y1, x2, y2 in boxes:
-        # map from letterboxed square back to original pixels (content placed at top-left, scale s)
-        out.append([
-            max(0.0, min(w0, x1 / scale)), max(0.0, min(h0, y1 / scale)),
-            max(0.0, min(w0, x2 / scale)), max(0.0, min(h0, y2 / scale)),
-        ])
+        ob = [max(0.0, min(w0, x1 / scale)), max(0.0, min(h0, y1 / scale)),
+              max(0.0, min(w0, x2 / scale)), max(0.0, min(h0, y2 / scale))]
+        if return_class:
+            cid = 0
+            if class_argmax is not None:
+                rx1, ry1 = int(max(0, x1)), int(max(0, y1))
+                rx2, ry2 = int(min(size, x2)), int(min(size, y2))
+                if rx2 > rx1 and ry2 > ry1:
+                    region = class_argmax[ry1:ry2, rx1:rx2].ravel()
+                    region = region[region > 0]                  # ignore background pixels
+                    if region.size:
+                        cid = int(np.bincount(region).argmax())
+            out.append((ob, cid))
+        else:
+            out.append(ob)
     return out
 
 

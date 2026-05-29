@@ -149,7 +149,8 @@ def train(cfg: dict) -> None:
                     accelerator.print(f"epoch {epoch} step {gstep}/{total_steps} "
                                       f"loss {losses['loss'].item():.4f} "
                                       f"(ls {losses['ls'].item():.3f} lb {losses['lb'].item():.3f} "
-                                      f"lt {losses['lt'].item():.3f}) lr {lr:.2e} {rate:.2f} st/s")
+                                      f"lt {losses['lt'].item():.3f} lc {losses['lc'].item():.3f}) "
+                                      f"lr {lr:.2e} {rate:.2f} st/s")
                 if gstep % cfg["eval_every_steps"] == 0:
                     m = evaluate(model, accelerator, cfg, val_rows, size, cfg["eval_max_pages"])
                     if m:

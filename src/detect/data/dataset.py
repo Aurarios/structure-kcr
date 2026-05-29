@@ -65,13 +65,23 @@ class DetDataset(Dataset):
         img = Image.open(img_path)
         if self.train:
             img = _aug_pil(img, random)
+
+        # vertical-squash augmentation: compress the page vertically so lines get closer ->
+        # teaches the detector to SEPARATE tightly-spaced lines (the real-doc merging failure).
+        # No re-render needed: derived from the existing generous-spacing synthetic pages.
+        sq = 1.0
+        if self.train and random.random() < 0.5:
+            sq = random.uniform(0.55, 0.95)
+            w, h = img.size
+            img = img.resize((w, max(1, int(h * sq))), Image.BILINEAR)
+
         arr, scale = letterbox_with_scale(img, self.size)
         if self.train:
             arr = _aug_np(arr, random)
 
-        boxes = [(x1 * scale, y1 * scale, x2 * scale, y2 * scale)
-                 for (x1, y1, x2, y2) in collect_line_boxes(label)]
-        prob, prob_mask, thresh, thresh_mask = make_db_targets(
+        boxes = [((x1 * scale, y1 * sq * scale, x2 * scale, y2 * sq * scale), cid)
+                 for ((x1, y1, x2, y2), cid) in collect_line_boxes(label, with_class=True)]
+        prob, prob_mask, thresh, thresh_mask, class_map = make_db_targets(
             boxes, self.size, self.size, shrink_ratio=self.shrink_ratio)
 
         pixel = torch.from_numpy(arr).permute(2, 0, 1).float() / 255.0
@@ -81,6 +91,7 @@ class DetDataset(Dataset):
             "prob_mask": torch.from_numpy(prob_mask),
             "thresh": torch.from_numpy(thresh),
             "thresh_mask": torch.from_numpy(thresh_mask),
+            "class_map": torch.from_numpy(class_map).long(),
         }
 
 

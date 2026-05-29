@@ -7,10 +7,23 @@ src/train/eval/metrics.page_metrics).
 """
 from __future__ import annotations
 
+from src.detect.data.build_det_targets import CLASSES
+
 REF_OPEN, REF_CLOSE = "<|ref|>", "<|/ref|>"
 DET_OPEN, DET_CLOSE = "<|det|>", "<|/det|>"
 
-Line = dict   # {"box":[x1,y1,x2,y2] (pixel), "text":str}
+Line = dict   # {"box":[x1,y1,x2,y2] (pixel), "text":str, "cls":int}
+
+# region-type id -> markdown rendering of a block's text
+_MD = {
+    "title": lambda t: f"# {t}",
+    "section_header": lambda t: f"## {t}",
+    "list_item": lambda t: f"- {t}",
+    "caption": lambda t: f"*{t}*",
+    "form_label": lambda t: f"**{t}**",
+    "form_value": lambda t: t,
+    "text": lambda t: t,
+}
 
 
 def _norm_box(b, w, h):
@@ -73,7 +86,12 @@ def reading_order(lines: list[Line], page_w: float) -> list[int]:
 
 
 def merge_lines_to_blocks(ordered: list[Line], page_w: float) -> list[Line]:
-    """Merge consecutive lines with small vertical gap + similar left edge into block units."""
+    """Merge consecutive lines with small vertical gap + similar left edge into block units.
+
+    Class-aware: only merges lines of the SAME region-type and only for flowing types (text,
+    list_item, form_value, caption). Titles, headers, and table cells stay as their own units so
+    document structure is preserved.
+    """
     if not ordered:
         return []
     blocks: list[Line] = []
@@ -82,22 +100,64 @@ def merge_lines_to_blocks(ordered: list[Line], page_w: float) -> list[Line]:
     cur = None
     for ln in ordered:
         x1, y1, x2, y2 = ln["box"]
+        cls = ln.get("cls", 0)
         if cur is None:
-            cur = {"box": list(ln["box"]), "text": ln["text"]}
+            cur = {"box": list(ln["box"]), "text": ln["text"], "cls": cls}
             continue
         cx1, cy1, cx2, cy2 = cur["box"]
         v_gap = y1 - cy2
         same_left = abs(x1 - cx1) < med_h * 1.5
-        # line_height in layouts.yaml ranges up to 2.0, so intra-paragraph gaps can ~= text height
-        if -med_h * 0.3 <= v_gap <= med_h * 1.3 and same_left:
+        flowing = CLASSES[cls] in ("text", "list_item", "form_value", "caption")
+        if cls == cur["cls"] and flowing and -med_h * 0.3 <= v_gap <= med_h * 1.3 and same_left:
             cur["box"] = [min(cx1, x1), min(cy1, y1), max(cx2, x2), max(cy2, y2)]
             cur["text"] += ln["text"]        # Khmer flows without spaces across line breaks
         else:
             blocks.append(cur)
-            cur = {"box": list(ln["box"]), "text": ln["text"]}
+            cur = {"box": list(ln["box"]), "text": ln["text"], "cls": cls}
     if cur:
         blocks.append(cur)
     return blocks
+
+
+def _reconstruct_table(cells: list[Line]) -> str:
+    """Group table_cell units into a markdown table by row (y-overlap) then column (x order)."""
+    if not cells:
+        return ""
+    cells = sorted(cells, key=lambda c: c["box"][1])
+    heights = sorted(c["box"][3] - c["box"][1] for c in cells)
+    tol = (heights[len(heights) // 2] or 10) * 0.7
+    rows: list[list[Line]] = []
+    for c in cells:
+        if rows and abs(c["box"][1] - rows[-1][0]["box"][1]) <= tol:
+            rows[-1].append(c)
+        else:
+            rows.append([c])
+    ncol = max(len(r) for r in rows)
+    md = []
+    for ri, r in enumerate(rows):
+        r = sorted(r, key=lambda c: c["box"][0])
+        texts = [c["text"] for c in r] + [""] * (ncol - len(r))
+        md.append("| " + " | ".join(texts) + " |")
+        if ri == 0:
+            md.append("| " + " | ".join(["---"] * ncol) + " |")
+    return "\n".join(md)
+
+
+def build_markdown(blocks: list[Line]) -> str:
+    """Render assembled blocks to structured markdown via region types (headings/lists/tables)."""
+    out: list[str] = []
+    i = 0
+    while i < len(blocks):
+        name = CLASSES[blocks[i].get("cls", 0)]
+        if name == "table_cell":
+            run = []
+            while i < len(blocks) and CLASSES[blocks[i].get("cls", 0)] == "table_cell":
+                run.append(blocks[i]); i += 1
+            out.append(_reconstruct_table(run))
+            continue
+        out.append(_MD.get(name, lambda t: t)(blocks[i]["text"]))
+        i += 1
+    return "\n\n".join(out)
 
 
 def to_grounded(units: list[Line], page_w: float, page_h: float) -> str:
@@ -120,4 +180,5 @@ def assemble(lines: list[Line], page_w: float, page_h: float, merge_blocks: bool
         "block_units": blocks,
         "grounded_lines": to_grounded(ordered, page_w, page_h),
         "grounded_blocks": to_grounded(blocks, page_w, page_h),
+        "markdown": build_markdown(blocks),   # structured: headings, lists, tables
     }

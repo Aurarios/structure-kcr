@@ -12,6 +12,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.detect.data.build_det_targets import NUM_CLASSES
+
 
 # --------------------------------------------------------------------------- ResNet backbone
 
@@ -120,16 +122,17 @@ class DBNet(nn.Module):
         # smooth 3x3 producing inner//4 each, then concat -> inner
         self.smooth = nn.ModuleList([nn.Conv2d(inner, inner // 4, 3, 1, 1, bias=False) for _ in ch])
 
-        def head():
+        def head(out_ch=1):
             return nn.Sequential(
                 nn.Conv2d(inner, inner // 4, 3, 1, 1, bias=False),
                 nn.BatchNorm2d(inner // 4), nn.ReLU(inplace=True),
                 nn.ConvTranspose2d(inner // 4, inner // 4, 2, 2),
                 nn.BatchNorm2d(inner // 4), nn.ReLU(inplace=True),
-                nn.ConvTranspose2d(inner // 4, 1, 2, 2),
+                nn.ConvTranspose2d(inner // 4, out_ch, 2, 2),
             )
         self.prob_head = head()
         self.thresh_head = head()
+        self.class_head = head(NUM_CLASSES)   # per-pixel region-type logits (0=background)
 
     def _neck(self, feats):
         c2, c3, c4, c5 = feats
@@ -146,12 +149,14 @@ class DBNet(nn.Module):
     def forward(self, x):
         fuse = self._neck(self.backbone(x))
         prob = self.prob_head(fuse)        # logits, full input res
+        class_logits = self.class_head(fuse)
         if not self.training:
-            return {"prob": torch.sigmoid(prob)}
+            return {"prob": torch.sigmoid(prob), "class_logits": class_logits}
         thresh = torch.sigmoid(self.thresh_head(fuse))
         prob_s = torch.sigmoid(prob)
         binary = 1.0 / (1.0 + torch.exp(-self.k * (prob_s - thresh)))
-        return {"prob_logits": prob, "prob": prob_s, "thresh": thresh, "binary": binary}
+        return {"prob_logits": prob, "prob": prob_s, "thresh": thresh, "binary": binary,
+                "class_logits": class_logits}
 
 
 # --------------------------------------------------------------------------- loss
@@ -185,15 +190,22 @@ def _dice(pred, gt, mask):
     return 1.0 - 2.0 * inter / union
 
 
-def db_loss(out: dict, batch: dict, alpha: float = 1.0, beta: float = 10.0) -> dict:
+def db_loss(out: dict, batch: dict, alpha: float = 1.0, beta: float = 10.0,
+            gamma: float = 0.5) -> dict:
     ls = _ohem_bce(out["prob_logits"], batch["prob"], batch["prob_mask"])
     lb = _dice(out["binary"], batch["prob"], batch["prob_mask"])
     thr = batch["thresh"].unsqueeze(1)
     tmask = batch["thresh_mask"].unsqueeze(1)
     denom = tmask.sum() + 1e-6
     lt = (torch.abs(out["thresh"] - thr) * tmask).sum() / denom
-    total = ls + alpha * lb + beta * lt
-    return {"loss": total, "ls": ls, "lb": lb, "lt": lt}
+    # class CE only on text pixels (gt prob > 0); background pixels are ignored to focus the head
+    cls_t = batch["class_map"]                       # (B,H,W) long
+    text = batch["prob"] > 0.5                        # (B,H,W) bool
+    ignore = cls_t.clone()
+    ignore[~text] = -100
+    lc = F.cross_entropy(out["class_logits"], ignore, ignore_index=-100)
+    total = ls + alpha * lb + beta * lt + gamma * lc
+    return {"loss": total, "ls": ls, "lb": lb, "lt": lt, "lc": lc}
 
 
 PROFILES = {
