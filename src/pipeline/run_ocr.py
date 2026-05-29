@@ -100,7 +100,7 @@ def main() -> None:
     det, rec, enc = load_models(args.det_ckpt, args.rec_ckpt, args.det_profile,
                                 args.rec_profile, args.device)
     det_cfg = {"image_size": args.det_size, "prob_thresh": 0.3,
-               "box_unclip_ratio": 1.5, "min_box_size": 4}
+               "box_unclip_ratio": 2.0, "min_box_size": 4, "min_confidence": 0.5}
     img = Image.open(args.image)
     res = run_ocr(img, det, rec, enc, det_cfg, args.device)
     print("=" * 60); print(f"ASSEMBLED ({len(res['block_units'])} blocks, "

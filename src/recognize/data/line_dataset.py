@@ -28,19 +28,59 @@ DOWNSAMPLE = 8        # stem reduces width by 8 -> CTC time steps = W // 8
 
 
 def _aug(img: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Scan-realistic augmentation to close the synthetic->real gap.
+
+    Diagnosis (confirmed by isolation): the recognizer reads synthetic renders near-perfectly but
+    fails on real scans, because it only ever saw crisp high-DPI crops. Real low-DPI scans are
+    blurry after upscale, paper-tinted, noisy, skewed, JPEG-degraded -> out of distribution. This
+    simulates those conditions so the model learns scan-robust features. Each op fires independently.
+    """
     try:
+        img = np.ascontiguousarray(img)
+        h, w = img.shape[:2]
+        # 1) RESOLUTION DEGRADATION (the key one): downscale then upscale -> low-DPI scan blur
         if rng.random() < 0.5:
-            a = rng.uniform(0.8, 1.2); b = rng.uniform(-15, 15)
+            f = rng.uniform(0.35, 0.8)
+            small = cv2.resize(img, (max(4, int(w * f)), max(4, int(h * f))), interpolation=cv2.INTER_AREA)
+            img = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        # 2) PAPER TINT / colour cast (cream, gray, warm) — real scans aren't pure white
+        if rng.random() < 0.4:
+            tint = np.array([rng.uniform(0.92, 1.0), rng.uniform(0.95, 1.02), rng.uniform(0.98, 1.06)])
+            img = np.clip(img.astype(np.float32) * tint, 0, 255).astype(np.uint8)
+        # 3) LIGHTING GRADIENT (uneven scan illumination)
+        if rng.random() < 0.25:
+            grad = np.linspace(rng.uniform(0.8, 1.0), rng.uniform(0.95, 1.15), w, dtype=np.float32)
+            img = np.clip(img.astype(np.float32) * grad[None, :, None], 0, 255).astype(np.uint8)
+        # 4) brightness / contrast / gamma (lighting + ink darkness)
+        if rng.random() < 0.5:
+            a = rng.uniform(0.7, 1.3); b = rng.uniform(-25, 25)
             img = np.clip(img.astype(np.float32) * a + b, 0, 255).astype(np.uint8)
+        if rng.random() < 0.25:
+            g = rng.uniform(0.7, 1.4)
+            lut = np.array([((i / 255.0) ** (1.0 / g)) * 255 for i in range(256)], np.uint8)
+            img = cv2.LUT(img, lut)
+        # 5) blur (scan defocus / anti-alias)
+        if rng.random() < 0.3 and h >= 7 and w >= 7:
+            k = rng.choice([3, 5])
+            img = cv2.GaussianBlur(img, (k, k), 0)
+        # 6) slight rotation/skew (page not perfectly flat)
         if rng.random() < 0.3:
-            sigma = rng.uniform(2.0, 10.0)
+            ang = rng.uniform(-2.0, 2.0)
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), ang, 1.0)
+            img = cv2.warpAffine(img, M, (w, h), borderValue=(245, 245, 245), flags=cv2.INTER_LINEAR)
+        # 7) sensor + speckle noise
+        if rng.random() < 0.4:
+            sigma = rng.uniform(3.0, 18.0)
             img = np.clip(img.astype(np.int16) + np.random.normal(0, sigma, img.shape).astype(np.int16),
                           0, 255).astype(np.uint8)
-        if rng.random() < 0.15 and img.shape[0] >= 7 and img.shape[1] >= 7:
-            k = rng.choice([3, 5])
-            img = cv2.GaussianBlur(np.ascontiguousarray(img), (k, k), 0)
+        # 8) JPEG compression artifacts (lower quality than the training crops)
+        if rng.random() < 0.4:
+            q = rng.randint(35, 80)
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])
+            if ok:
+                img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     except cv2.error:
-        return img
+        return np.ascontiguousarray(img)
     return img
 
 
