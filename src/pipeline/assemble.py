@@ -1,0 +1,123 @@
+"""Assemble detector boxes + recognizer text into reading order and grounded markdown.
+
+Deterministic geometry (no training): column clustering -> top-to-bottom / left-to-right reading
+order -> optional line->block merge -> DeepSeek-OCR grounded-markdown emission (same format as
+src/render/to_grounded_markdown.py, so output is comparable to the AR baseline and scorable by
+src/train/eval/metrics.page_metrics).
+"""
+from __future__ import annotations
+
+REF_OPEN, REF_CLOSE = "<|ref|>", "<|/ref|>"
+DET_OPEN, DET_CLOSE = "<|det|>", "<|/det|>"
+
+Line = dict   # {"box":[x1,y1,x2,y2] (pixel), "text":str}
+
+
+def _norm_box(b, w, h):
+    x1, y1, x2, y2 = b
+    return [max(0, min(999, round(x1 / w * 999))), max(0, min(999, round(y1 / h * 999))),
+            max(0, min(999, round(x2 / w * 999))), max(0, min(999, round(y2 / h * 999)))]
+
+
+def cluster_columns(lines: list[Line], page_w: float) -> list[int]:
+    """Assign each line a column index via gap-based 1-D clustering on box x-centers."""
+    if not lines:
+        return []
+    centers = sorted((((l["box"][0] + l["box"][2]) / 2), i) for i, l in enumerate(lines))
+    gap_thresh = page_w * 0.18      # a column break is a horizontal gap > 18% of page width
+    col_of = [0] * len(lines)
+    col = 0
+    prev_c = centers[0][0]
+    # assign in x-center order, bumping column when a large gap appears
+    order = [i for _, i in centers]
+    cx = [c for c, _ in centers]
+    for k in range(1, len(order)):
+        if cx[k] - cx[k - 1] > gap_thresh:
+            col += 1
+        col_of[order[k]] = col
+    # but a single big gap from one outlier shouldn't fragment; cap columns at 3
+    if col > 2:
+        # fall back to single column if clustering is noisy
+        return [0] * len(lines)
+    return col_of
+
+
+def reading_order(lines: list[Line], page_w: float) -> list[int]:
+    """Return line indices in reading order: columns L->R, rows T->B, ties L->R."""
+    if not lines:
+        return []
+    cols = cluster_columns(lines, page_w)
+    heights = sorted((l["box"][3] - l["box"][1]) for l in lines)
+    med_h = heights[len(heights) // 2] or 1
+    y_tol = med_h * 0.6
+
+    def col_x(c):
+        xs = [(l["box"][0] + l["box"][2]) / 2 for l, cc in zip(lines, cols) if cc == c]
+        return sum(xs) / len(xs) if xs else 0
+
+    order: list[int] = []
+    for c in sorted(set(cols), key=col_x):
+        idxs = [i for i in range(len(lines)) if cols[i] == c]
+        idxs.sort(key=lambda i: lines[i]["box"][1])       # by top
+        # within a y-tolerance band, order left-to-right
+        i = 0
+        while i < len(idxs):
+            j = i + 1
+            top = lines[idxs[i]]["box"][1]
+            while j < len(idxs) and lines[idxs[j]]["box"][1] - top <= y_tol:
+                j += 1
+            band = sorted(idxs[i:j], key=lambda k: lines[k]["box"][0])
+            order.extend(band)
+            i = j
+    return order
+
+
+def merge_lines_to_blocks(ordered: list[Line], page_w: float) -> list[Line]:
+    """Merge consecutive lines with small vertical gap + similar left edge into block units."""
+    if not ordered:
+        return []
+    blocks: list[Line] = []
+    heights = sorted((l["box"][3] - l["box"][1]) for l in ordered)
+    med_h = heights[len(heights) // 2] or 1
+    cur = None
+    for ln in ordered:
+        x1, y1, x2, y2 = ln["box"]
+        if cur is None:
+            cur = {"box": list(ln["box"]), "text": ln["text"]}
+            continue
+        cx1, cy1, cx2, cy2 = cur["box"]
+        v_gap = y1 - cy2
+        same_left = abs(x1 - cx1) < med_h * 1.5
+        # line_height in layouts.yaml ranges up to 2.0, so intra-paragraph gaps can ~= text height
+        if -med_h * 0.3 <= v_gap <= med_h * 1.3 and same_left:
+            cur["box"] = [min(cx1, x1), min(cy1, y1), max(cx2, x2), max(cy2, y2)]
+            cur["text"] += ln["text"]        # Khmer flows without spaces across line breaks
+        else:
+            blocks.append(cur)
+            cur = {"box": list(ln["box"]), "text": ln["text"]}
+    if cur:
+        blocks.append(cur)
+    return blocks
+
+
+def to_grounded(units: list[Line], page_w: float, page_h: float) -> str:
+    """Emit DeepSeek-OCR grounded markdown from ordered units (lines or blocks)."""
+    parts = []
+    for u in units:
+        nb = _norm_box(u["box"], page_w, page_h)
+        parts.append(f"{REF_OPEN}{u['text']}{REF_CLOSE}{DET_OPEN}[[{nb[0]}, {nb[1]}, "
+                     f"{nb[2]}, {nb[3]}]]{DET_CLOSE}")
+    return "\n".join(parts)
+
+
+def assemble(lines: list[Line], page_w: float, page_h: float, merge_blocks: bool = True) -> dict:
+    """Full assembly. Returns {order, line_units, block_units, grounded_lines, grounded_blocks}."""
+    order = reading_order(lines, page_w)
+    ordered = [lines[i] for i in order]
+    blocks = merge_lines_to_blocks(ordered, page_w) if merge_blocks else ordered
+    return {
+        "line_units": ordered,
+        "block_units": blocks,
+        "grounded_lines": to_grounded(ordered, page_w, page_h),
+        "grounded_blocks": to_grounded(blocks, page_w, page_h),
+    }

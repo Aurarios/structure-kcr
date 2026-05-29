@@ -1,0 +1,38 @@
+# DBNet detector — --parallel (3x A5000 24GB, DDP)
+# accelerate launch --multi_gpu --num_processes 3 -m src.detect.train_detector --parallel
+profile: parallel
+seed: 42
+
+manifests:
+  train: data/manifests/train.jsonl
+  val:   data/manifests/val.jsonl
+image_size: 1280
+shrink_ratio: 0.4
+
+batch_size_per_device: 8     # x3 GPUs = 24
+grad_accum_steps: 1
+num_workers: 8
+
+epochs: 6
+optimizer:
+  type: adamw
+  lr: 2.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+gradient_clip_norm: 5.0
+
+mixed_precision: bf16
+
+prob_thresh: 0.3
+box_unclip_ratio: 1.5
+min_box_size: 4
+
+eval_every_steps: 1000
+eval_max_pages: 400
+save_every_steps: 2500
+ckpt_dir: data/checkpoints/detector_parallel
+keep_last_n_ckpts: 5
+log_every_steps: 25

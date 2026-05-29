@@ -1,0 +1,36 @@
+# Line recognizer — --single (RTX 4070 Ti 12GB)
+profile: single
+seed: 42
+
+tokenizer_model: data/tokenizer/khmer_ocr.model
+lines_root: E:/kcr-recognize/lines
+manifests:
+  train: E:/kcr-recognize/lines/lines_train.jsonl
+  val:   E:/kcr-recognize/lines/lines_val.jsonl
+max_w: 1200
+
+batch_size_per_device: 256
+grad_accum_steps: 1
+num_workers: 8
+
+epochs: 8
+optimizer:
+  type: adamw
+  lr: 5.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 2000
+label_smoothing: 0.1
+ctc_weight: 0.3            # loss = (1-w)*CE_attn + w*CTC
+gradient_clip_norm: 1.0
+
+mixed_precision: bf16
+
+eval_every_steps: 2000
+eval_max_lines: 800
+save_every_steps: 5000
+ckpt_dir: data/checkpoints/recognizer_single
+keep_last_n_ckpts: 5
+log_every_steps: 50

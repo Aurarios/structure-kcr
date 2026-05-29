@@ -1,0 +1,102 @@
+"""Build DBNet training targets from text-line boxes.
+
+The synthetic labels already store per-line rectangles (`blocks[].lines`, image-pixel space). The
+detector ground truth is the union of all line boxes on a page. DBNet needs three maps:
+
+  prob_map   : 1 inside the SHRUNK line box (Differentiable-Binarization "probability" target)
+  thresh_map : a border band around each box, ramping thresh_max (at the box edge) -> thresh_min
+               (at distance d outward/inward); only this band contributes to the L1 loss
+  thresh_mask: 1 where the threshold band is defined, else 0
+
+Because our line boxes are axis-aligned rectangles we shrink/expand with closed-form rectangle
+offsets (d = A*(1-r^2)/L), avoiding pyclipper/shapely. Reference: Liao et al., "Real-time Scene
+Text Detection with Differentiable Binarization" (AAAI 2020).
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import cv2
+import numpy as np
+
+Box = tuple[float, float, float, float]
+
+
+def collect_line_boxes(label: dict[str, Any]) -> list[Box]:
+    """Union of every block's line rectangles (image-pixel space)."""
+    boxes: list[Box] = []
+    for blk in label.get("blocks", []):
+        for ln in (blk.get("lines") or []):
+            if len(ln) == 4:
+                x1, y1, x2, y2 = ln
+                if x2 > x1 and y2 > y1:
+                    boxes.append((float(x1), float(y1), float(x2), float(y2)))
+    return boxes
+
+
+def _rect_offset(box: Box, shrink_ratio: float) -> float:
+    """DBNet polygon offset distance for an axis-aligned rectangle."""
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    area = w * h
+    perim = 2.0 * (w + h)
+    if perim <= 0:
+        return 0.0
+    return area * (1.0 - shrink_ratio ** 2) / perim
+
+
+def make_db_targets(
+    boxes: list[Box],
+    height: int,
+    width: int,
+    shrink_ratio: float = 0.4,
+    thresh_min: float = 0.3,
+    thresh_max: float = 0.7,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Rasterize DBNet targets at (height, width). Boxes are in that same pixel space."""
+    prob = np.zeros((height, width), dtype=np.float32)
+    prob_mask = np.ones((height, width), dtype=np.float32)
+    thresh = np.zeros((height, width), dtype=np.float32)
+    thresh_mask = np.zeros((height, width), dtype=np.float32)
+
+    for box in boxes:
+        d = _rect_offset(box, shrink_ratio)
+        x1, y1, x2, y2 = box
+
+        # --- probability target: filled shrunk rectangle ---
+        sx1, sy1 = x1 + d, y1 + d
+        sx2, sy2 = x2 - d, y2 - d
+        if sx2 - sx1 >= 1 and sy2 - sy1 >= 1:
+            cv2.rectangle(prob, (int(round(sx1)), int(round(sy1))),
+                          (int(round(sx2)), int(round(sy2))), 1.0, thickness=-1)
+
+        # --- threshold band: work on a padded ROI for speed/correctness ---
+        pad = int(np.ceil(d)) + 2
+        rx1, ry1 = max(0, int(np.floor(x1)) - pad), max(0, int(np.floor(y1)) - pad)
+        rx2, ry2 = min(width, int(np.ceil(x2)) + pad), min(height, int(np.ceil(y2)) + pad)
+        if rx2 <= rx1 or ry2 <= ry1 or d < 1:
+            continue
+        rw, rh = rx2 - rx1, ry2 - ry1
+
+        # filled box mask within ROI
+        box_mask = np.zeros((rh, rw), dtype=np.uint8)
+        bx1, by1 = int(round(x1)) - rx1, int(round(y1)) - ry1
+        bx2, by2 = int(round(x2)) - rx1, int(round(y2)) - ry1
+        cv2.rectangle(box_mask, (bx1, by1), (bx2, by2), 1, thickness=-1)
+
+        # distance to the box border = min(dist inside box to outside, dist outside box to box)
+        dist_out = cv2.distanceTransform(1 - box_mask, cv2.DIST_L2, 5)   # 0 on box, grows outward
+        dist_in = cv2.distanceTransform(box_mask, cv2.DIST_L2, 5)        # 0 outside, grows inward
+        border_dist = np.where(box_mask > 0, dist_in, dist_out).astype(np.float32)
+
+        band = border_dist <= d
+        # value: thresh_max at the border (dist 0) -> thresh_min at distance d
+        val = thresh_min + (thresh_max - thresh_min) * (1.0 - np.clip(border_dist / d, 0, 1))
+
+        roi_thresh = thresh[ry1:ry2, rx1:rx2]
+        roi_mask = thresh_mask[ry1:ry2, rx1:rx2]
+        upd = band & (val > roi_thresh)
+        roi_thresh[upd] = val[upd]
+        roi_mask[band] = 1.0
+
+    return prob, prob_mask, thresh, thresh_mask
