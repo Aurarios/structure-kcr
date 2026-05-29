@@ -19,37 +19,56 @@ from torch.utils.data import Dataset
 
 from src.recognize.data.text_encoder import TextEncoder
 
+# OpenCV's internal threading throws "Unknown C++ exception" when called from many DataLoader
+# worker processes; disabling it makes cv2 calls in workers safe (we parallelize via workers).
+cv2.setNumThreads(0)
+
 CROP_H = 48
 DOWNSAMPLE = 8        # stem reduces width by 8 -> CTC time steps = W // 8
 
 
 def _aug(img: np.ndarray, rng: random.Random) -> np.ndarray:
-    if rng.random() < 0.5:
-        a = rng.uniform(0.8, 1.2); b = rng.uniform(-15, 15)
-        img = np.clip(img.astype(np.float32) * a + b, 0, 255).astype(np.uint8)
-    if rng.random() < 0.3:
-        sigma = rng.uniform(2.0, 10.0)
-        img = np.clip(img.astype(np.int16) + np.random.normal(0, sigma, img.shape).astype(np.int16),
-                      0, 255).astype(np.uint8)
-    if rng.random() < 0.15:
-        k = rng.choice([3, 5])
-        img = cv2.GaussianBlur(img, (k, k), 0)
+    try:
+        if rng.random() < 0.5:
+            a = rng.uniform(0.8, 1.2); b = rng.uniform(-15, 15)
+            img = np.clip(img.astype(np.float32) * a + b, 0, 255).astype(np.uint8)
+        if rng.random() < 0.3:
+            sigma = rng.uniform(2.0, 10.0)
+            img = np.clip(img.astype(np.int16) + np.random.normal(0, sigma, img.shape).astype(np.int16),
+                          0, 255).astype(np.uint8)
+        if rng.random() < 0.15 and img.shape[0] >= 7 and img.shape[1] >= 7:
+            k = rng.choice([3, 5])
+            img = cv2.GaussianBlur(np.ascontiguousarray(img), (k, k), 0)
+    except cv2.error:
+        return img
     return img
 
 
 class LineDataset(Dataset):
     def __init__(self, manifest_path: Path | str, root: Path | str, encoder: TextEncoder,
-                 train: bool = False, max_w: int = 1200):
+                 train: bool = False, max_w: int = 1200, max_chars: int = 220,
+                 max_tgt_len: int = 256):
         self.root = Path(root)
         self.enc = encoder
         self.train = train
         self.max_w = max_w
+        self.max_tgt_len = max_tgt_len    # hard clamp on target token length (crash guard)
         self.rows: list[dict[str, Any]] = []
+        dropped = 0
         with open(manifest_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    self.rows.append(json.loads(line))
+                if not line:
+                    continue
+                row = json.loads(line)
+                # drop pathologically long "lines" (usually line-grouping anomalies); cheap
+                # char-length proxy avoids tokenizing 3M texts at init
+                if len(row.get("text", "")) > max_chars:
+                    dropped += 1
+                    continue
+                self.rows.append(row)
+        if dropped:
+            print(f"[line_dataset] dropped {dropped} over-long lines (>{max_chars} chars)")
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -69,11 +88,19 @@ class LineDataset(Dataset):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         pixel = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
         text = row["text"]
+        attn = self.enc.encode_attn(text)
+        ctc = self.enc.encode_ctc(text)
+        # hard crash-guard: clamp to the model's positional-encoding capacity (rare after the
+        # char filter; truncation keeps a trailing eos so the sequence stays well-formed)
+        if len(attn) > self.max_tgt_len:
+            attn = attn[: self.max_tgt_len - 1] + [self.enc.eos]
+        if len(ctc) > self.max_tgt_len:
+            ctc = ctc[: self.max_tgt_len]
         return {
             "pixel": pixel,
             "width": pixel.shape[2],
-            "attn": torch.tensor(self.enc.encode_attn(text), dtype=torch.long),
-            "ctc": torch.tensor(self.enc.encode_ctc(text), dtype=torch.long),
+            "attn": torch.tensor(attn, dtype=torch.long),
+            "ctc": torch.tensor(ctc, dtype=torch.long),
         }
 
 

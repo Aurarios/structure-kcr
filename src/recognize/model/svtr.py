@@ -76,10 +76,12 @@ class RecProfile:
 
 
 PROFILES = {
+    # max_dec_len must exceed the longest line's token count (a full article line can be
+    # 60-120 tokens); set generously and clamp anomalies in the dataset.
     "single": RecProfile(d_model=256, enc_layers=6, dec_layers=2, heads=8, ffn=1024,
-                         max_w_tokens=200, max_dec_len=96),
+                         max_w_tokens=200, max_dec_len=256),
     "parallel": RecProfile(d_model=384, enc_layers=9, dec_layers=3, heads=8, ffn=1536,
-                           max_w_tokens=256, max_dec_len=128),
+                           max_w_tokens=256, max_dec_len=320),
 }
 
 

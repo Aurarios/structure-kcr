@@ -27,7 +27,8 @@ gradient_clip_norm: 5.0
 mixed_precision: bf16
 
 prob_thresh: 0.3
-box_unclip_ratio: 1.5
+box_unclip_ratio: 2.0
+edge_margin_frac: 0.18
 min_box_size: 4
 
 eval_every_steps: 1000

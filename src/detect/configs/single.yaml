@@ -27,7 +27,8 @@ mixed_precision: bf16
 
 # box decode (inference / eval)
 prob_thresh: 0.3
-box_unclip_ratio: 1.5    # expand detected shrunk region back out
+box_unclip_ratio: 2.0    # expand detected shrunk region back out (recovers edge glyphs)
+edge_margin_frac: 0.18   # extra horizontal margin so first/last char isn't clipped
 min_box_size: 4
 
 eval_every_steps: 2000

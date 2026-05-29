@@ -7,11 +7,11 @@ lines_root: E:/kcr-recognize/lines
 manifests:
   train: E:/kcr-recognize/lines/lines_train.jsonl
   val:   E:/kcr-recognize/lines/lines_val.jsonl
-max_w: 1200
+max_w: 800              # cap line width -> CTC time steps T<=100, bounds the (B,T,22k) logits tensor
 
-batch_size_per_device: 256
-grad_accum_steps: 1
-num_workers: 8
+batch_size_per_device: 48
+grad_accum_steps: 4     # effective batch 192 (kept at 48: safe VRAM with max_dec_len=256)
+num_workers: 14        # CPU idle (~14%); more workers keep the GPU fed (kills the util dips)
 
 epochs: 8
 optimizer:

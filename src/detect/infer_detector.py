@@ -26,8 +26,19 @@ Box = list[float]
 
 
 def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
-                 unclip_ratio: float = 1.5, min_size: int = 4) -> list[Box]:
-    """prob_map (H,W) float in [0,1] -> list of [x1,y1,x2,y2] in prob-map pixel space."""
+                 unclip_ratio: float = 2.0, min_size: int = 4,
+                 edge_margin_frac: float = 0.18) -> list[Box]:
+    """prob_map (H,W) float in [0,1] -> list of [x1,y1,x2,y2] in prob-map pixel space.
+
+    DBNet detects the SHRUNK text region; we expand it back to the true text extent. Because the
+    training shrink offset was computed on the (larger) original box but the unclip distance is
+    computed on the (smaller) detected box, a plain unclip under-recovers the width of thin lines
+    and clips the first/last glyph. Fix: (1) a larger unclip_ratio, and (2) an explicit HORIZONTAL
+    margin proportional to line height to guarantee edge glyphs are included (lines have no
+    horizontal neighbours, so over-including a little background is harmless). Vertical expansion is
+    kept to the unclip only, so boxes don't bleed into the closely-spaced line above/below.
+    """
+    H_map, W_map = prob_map.shape
     binmap = (prob_map >= prob_thresh).astype(np.uint8)
     contours, _ = cv2.findContours(binmap, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes: list[Box] = []
@@ -38,7 +49,10 @@ def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
         area = w * h
         perim = 2.0 * (w + h)
         d = area * unclip_ratio / perim if perim > 0 else 0.0
-        boxes.append([x - d, y - d, x + w + d, y + h + d])
+        mh = max(3.0, h * edge_margin_frac)        # horizontal safety margin (recover edge glyphs)
+        x1, y1 = x - d - mh, y - d
+        x2, y2 = x + w + d + mh, y + h + d
+        boxes.append([max(0.0, x1), max(0.0, y1), min(W_map, x2), min(H_map, y2)])
     return boxes
 
 
@@ -50,7 +64,8 @@ def detect_page(model, pil_img: Image.Image, size: int, device: str, cfg: dict) 
     px = ((px - IMAGENET_MEAN) / IMAGENET_STD).to(device, dtype=next(model.parameters()).dtype)
     prob = model(px)["prob"][0, 0].float().cpu().numpy()
     boxes = decode_boxes(prob, cfg.get("prob_thresh", 0.3),
-                         cfg.get("box_unclip_ratio", 1.5), cfg.get("min_box_size", 4))
+                         cfg.get("box_unclip_ratio", 2.0), cfg.get("min_box_size", 4),
+                         cfg.get("edge_margin_frac", 0.18))
     w0, h0 = pil_img.size
     out: list[Box] = []
     for x1, y1, x2, y2 in boxes:
@@ -67,7 +82,10 @@ def main() -> None:
     ap.add_argument("--ckpt", type=Path, required=True)
     ap.add_argument("--image", type=Path, required=True)
     ap.add_argument("--profile", default="single")
-    ap.add_argument("--size", type=int, default=960)
+    ap.add_argument("--size", type=int, default=960, help="inference resolution; raise for dense/tall pages")
+    ap.add_argument("--prob-thresh", type=float, default=0.3, help="lower -> higher recall (catches faint lines)")
+    ap.add_argument("--unclip", type=float, default=2.0, help="box expansion ratio")
+    ap.add_argument("--min-box-size", type=int, default=4)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", type=Path, default=None, help="optional: save image with boxes drawn")
     args = ap.parse_args()
@@ -78,7 +96,8 @@ def main() -> None:
     model.eval().to(args.device)
 
     img = Image.open(args.image)
-    cfg = {"prob_thresh": 0.3, "box_unclip_ratio": 1.5, "min_box_size": 4}
+    cfg = {"prob_thresh": args.prob_thresh, "box_unclip_ratio": args.unclip,
+           "min_box_size": args.min_box_size}
     boxes = detect_page(model, img, args.size, args.device, cfg)
     print(f"detected {len(boxes)} line boxes")
     for b in boxes[:20]:
