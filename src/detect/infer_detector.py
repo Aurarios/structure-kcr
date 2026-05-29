@@ -25,9 +25,31 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 Box = list[float]
 
 
+def _nms(boxes: list[tuple[Box, float]], iou_thresh: float = 0.6) -> list[Box]:
+    """Greedy NMS on (box, score) pairs; keeps the higher-confidence box of an overlapping pair."""
+    boxes = sorted(boxes, key=lambda b: b[1], reverse=True)
+    kept: list[Box] = []
+    for box, _ in boxes:
+        x1, y1, x2, y2 = box
+        a = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        drop = False
+        for k in kept:
+            ix1, iy1 = max(x1, k[0]), max(y1, k[1])
+            ix2, iy2 = min(x2, k[2]), min(y2, k[3])
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            ka = max(0.0, k[2] - k[0]) * max(0.0, k[3] - k[1])
+            if inter / (a + ka - inter + 1e-6) > iou_thresh:
+                drop = True
+                break
+        if not drop:
+            kept.append(box)
+    return kept
+
+
 def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
                  unclip_ratio: float = 2.0, min_size: int = 4,
-                 edge_margin_frac: float = 0.18) -> list[Box]:
+                 edge_margin_frac: float = 0.18, min_confidence: float = 0.5,
+                 min_area: int = 40) -> list[Box]:
     """prob_map (H,W) float in [0,1] -> list of [x1,y1,x2,y2] in prob-map pixel space.
 
     DBNet detects the SHRUNK text region; we expand it back to the true text extent. Because the
@@ -37,14 +59,24 @@ def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
     margin proportional to line height to guarantee edge glyphs are included (lines have no
     horizontal neighbours, so over-including a little background is harmless). Vertical expansion is
     kept to the unclip only, so boxes don't bleed into the closely-spaced line above/below.
+
+    Robustness filters (matter on real, tight-spaced docs): drop components whose MEAN probability is
+    low (spurious 'empty' boxes), drop tiny fragments (min_area), and NMS to remove overlaps.
     """
     H_map, W_map = prob_map.shape
     binmap = (prob_map >= prob_thresh).astype(np.uint8)
     contours, _ = cv2.findContours(binmap, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes: list[Box] = []
+    scored: list[tuple[Box, float]] = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w < min_size or h < min_size:
+        if w < min_size or h < min_size or w * h < min_area:
+            continue
+        # confidence = mean prob inside the filled component (kills marginal/empty activations)
+        mask = np.zeros((h, w), np.uint8)
+        cv2.drawContours(mask, [c - [x, y]], -1, 1, thickness=-1)
+        region = prob_map[y:y + h, x:x + w]
+        conf = float(region[mask.astype(bool)].mean()) if mask.any() else 0.0
+        if conf < min_confidence:
             continue
         area = w * h
         perim = 2.0 * (w + h)
@@ -52,8 +84,9 @@ def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
         mh = max(3.0, h * edge_margin_frac)        # horizontal safety margin (recover edge glyphs)
         x1, y1 = x - d - mh, y - d
         x2, y2 = x + w + d + mh, y + h + d
-        boxes.append([max(0.0, x1), max(0.0, y1), min(W_map, x2), min(H_map, y2)])
-    return boxes
+        box = [max(0.0, x1), max(0.0, y1), min(W_map, x2), min(H_map, y2)]
+        scored.append((box, conf))
+    return _nms(scored, iou_thresh=0.6)
 
 
 @torch.no_grad()
@@ -65,7 +98,8 @@ def detect_page(model, pil_img: Image.Image, size: int, device: str, cfg: dict) 
     prob = model(px)["prob"][0, 0].float().cpu().numpy()
     boxes = decode_boxes(prob, cfg.get("prob_thresh", 0.3),
                          cfg.get("box_unclip_ratio", 2.0), cfg.get("min_box_size", 4),
-                         cfg.get("edge_margin_frac", 0.18))
+                         cfg.get("edge_margin_frac", 0.18), cfg.get("min_confidence", 0.5),
+                         cfg.get("min_area", 40))
     w0, h0 = pil_img.size
     out: list[Box] = []
     for x1, y1, x2, y2 in boxes:
@@ -86,6 +120,7 @@ def main() -> None:
     ap.add_argument("--prob-thresh", type=float, default=0.3, help="lower -> higher recall (catches faint lines)")
     ap.add_argument("--unclip", type=float, default=2.0, help="box expansion ratio")
     ap.add_argument("--min-box-size", type=int, default=4)
+    ap.add_argument("--min-confidence", type=float, default=0.5, help="drop low-mean-prob (empty) boxes")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", type=Path, default=None, help="optional: save image with boxes drawn")
     args = ap.parse_args()
@@ -97,7 +132,7 @@ def main() -> None:
 
     img = Image.open(args.image)
     cfg = {"prob_thresh": args.prob_thresh, "box_unclip_ratio": args.unclip,
-           "min_box_size": args.min_box_size}
+           "min_box_size": args.min_box_size, "min_confidence": args.min_confidence}
     boxes = detect_page(model, img, args.size, args.device, cfg)
     print(f"detected {len(boxes)} line boxes")
     for b in boxes[:20]:

@@ -124,8 +124,13 @@ class Recognizer(nn.Module):
         return ctc_logits, self.out(h)
 
     @torch.no_grad()
-    def greedy(self, images, bos, eos, max_len=None):
-        """Autoregressive greedy decode from the attention head. Returns list[list[int]]."""
+    def greedy(self, images, bos, eos, max_len=None, no_repeat_ngram: int = 3):
+        """Autoregressive greedy decode from the attention head. Returns list[list[int]].
+
+        ``no_repeat_ngram`` blocks the decoder from emitting a token that would complete an
+        n-gram already generated in the same sequence — kills the repetition loops that an
+        under-trained eos predictor falls into (transcribes the line, then repeats phrases).
+        """
         max_len = max_len or self.p.max_dec_len
         memory = self.encode(images)
         B = images.size(0)
@@ -136,7 +141,20 @@ class Recognizer(nn.Module):
             L = ys.size(1)
             causal = torch.triu(torch.full((L, L), float("-inf"), device=ys.device), diagonal=1)
             h = self.decoder(tgt, memory, tgt_mask=causal)
-            nxt = self.out(h[:, -1]).argmax(-1)
+            logits = self.out(h[:, -1])
+            if no_repeat_ngram and L >= no_repeat_ngram:
+                n = no_repeat_ngram
+                seqs = ys.tolist()
+                for b in range(B):
+                    prefix = tuple(seqs[b][-(n - 1):])
+                    banned = set()
+                    s = seqs[b]
+                    for i in range(len(s) - n + 1):
+                        if tuple(s[i:i + n - 1]) == prefix:
+                            banned.add(s[i + n - 1])
+                    for tok in banned:
+                        logits[b, tok] = float("-inf")
+            nxt = logits.argmax(-1)
             nxt = nxt.masked_fill(done, eos)
             ys = torch.cat([ys, nxt.unsqueeze(1)], dim=1)
             done = done | nxt.eq(eos)
