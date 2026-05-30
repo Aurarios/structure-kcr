@@ -32,6 +32,54 @@ def _norm_box(b, w, h):
             max(0, min(999, round(x2 / w * 999))), max(0, min(999, round(y2 / h * 999)))]
 
 
+def _cls_id(name: str) -> int:
+    return CLASSES.index(name) if name in CLASSES else CLASSES.index("text")
+
+
+def refine_structure(lines: list[Line], page_w: float) -> list[Line]:
+    """Reconcile the learned class with domain-invariant geometry cues.
+
+    The detector's class head overfits synthetic heading *appearance* and collapses real-doc
+    headings to 'text'. Layout geometry (centering, relative height, width) transfers across domains
+    far better, so we use it to recover headings:
+      - centered + not full-width  -> title (large) / section_header (smaller)
+      - left-margin + short + taller-than-body -> section_header (e.g. article markers)
+    The learned class is kept for table_cell / form_* / list_item, where geometry alone is weak;
+    geometry only overrides the text<->heading confusion.
+    """
+    if not lines:
+        return lines
+    heights = sorted(l["box"][3] - l["box"][1] for l in lines)
+    med_h = heights[len(heights) // 2] or 1
+    widths = [l["box"][2] - l["box"][0] for l in lines]
+    med_w = sorted(widths)[len(widths) // 2] or 1
+
+    for l in lines:
+        x1, y1, x2, y2 = l["box"]
+        w, h = x2 - x1, y2 - y1
+        cx = (x1 + x2) / 2
+        learned = CLASSES[l.get("cls", 0)]
+        # keep structural classes the geometry can't judge well
+        if learned in ("table_cell", "form_label", "form_value", "list_item"):
+            l["cls"] = l.get("cls", 0)
+            continue
+        center_off = abs(cx - page_w / 2) / page_w          # 0 = perfectly centered
+        left_margin = x1 / page_w
+        width_frac = w / page_w
+        tall = h >= med_h * 1.15
+        centered = center_off < 0.12 and width_frac < 0.85   # centered and not full-width
+        if centered and tall:
+            l["cls"] = _cls_id("title")
+        elif centered:
+            l["cls"] = _cls_id("section_header")
+        elif tall and width_frac < 0.45 and left_margin < 0.2:
+            # short, left, larger-than-body line = a heading/marker (e.g. មាត្រា១)
+            l["cls"] = _cls_id("section_header")
+        else:
+            l["cls"] = _cls_id("text")
+    return lines
+
+
 def cluster_columns(lines: list[Line], page_w: float) -> list[int]:
     """Assign each line a column index via gap-based 1-D clustering on box x-centers."""
     if not lines:
@@ -170,8 +218,11 @@ def to_grounded(units: list[Line], page_w: float, page_h: float) -> str:
     return "\n".join(parts)
 
 
-def assemble(lines: list[Line], page_w: float, page_h: float, merge_blocks: bool = True) -> dict:
+def assemble(lines: list[Line], page_w: float, page_h: float, merge_blocks: bool = True,
+             refine: bool = True) -> dict:
     """Full assembly. Returns {order, line_units, block_units, grounded_lines, grounded_blocks}."""
+    if refine:
+        lines = refine_structure(lines, page_w)
     order = reading_order(lines, page_w)
     ordered = [lines[i] for i in order]
     blocks = merge_lines_to_blocks(ordered, page_w) if merge_blocks else ordered
