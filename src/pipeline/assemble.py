@@ -7,6 +7,8 @@ src/train/eval/metrics.page_metrics).
 """
 from __future__ import annotations
 
+import re
+
 from src.detect.data.build_det_targets import CLASSES
 
 REF_OPEN, REF_CLOSE = "<|ref|>", "<|/ref|>"
@@ -14,16 +16,20 @@ DET_OPEN, DET_CLOSE = "<|det|>", "<|/det|>"
 
 Line = dict   # {"box":[x1,y1,x2,y2] (pixel), "text":str, "cls":int}
 
-# region-type id -> markdown rendering of a block's text
+# region-type -> markdown rendering of a block's text (canonical V3 mapping; matches
+# src/render/to_grounded_markdown.py so the model's output converts to HTML the same way labels do).
 _MD = {
     "title": lambda t: f"# {t}",
-    "section_header": lambda t: f"## {t}",
+    "heading": lambda t: f"## {t}",
+    "subheading": lambda t: f"### {t}",
+    "section_header": lambda t: f"## {t}",      # back-compat with frozen V1/V2 output
     "list_item": lambda t: f"- {t}",
     "caption": lambda t: f"*{t}*",
     "form_label": lambda t: f"**{t}**",
     "form_value": lambda t: t,
     "text": lambda t: t,
 }
+_NONTEXT = ("image", "signature", "hand_drawing")   # rendered as markdown <img> placeholders
 
 
 def _norm_box(b, w, h):
@@ -32,51 +38,44 @@ def _norm_box(b, w, h):
             max(0, min(999, round(x2 / w * 999))), max(0, min(999, round(y2 / h * 999)))]
 
 
-def _cls_id(name: str) -> int:
-    return CLASSES.index(name) if name in CLASSES else CLASSES.index("text")
+def _cls_id(name: str, classes: list = CLASSES) -> int:
+    return classes.index(name) if name in classes else classes.index("text")
 
 
-def refine_structure(lines: list[Line], page_w: float) -> list[Line]:
-    """Reconcile the learned class with domain-invariant geometry cues.
+def refine_structure(lines: list[Line], page_w: float, classes: list = CLASSES) -> list[Line]:
+    """Light geometry fallback that TRUSTS the (V2) learned class.
 
-    The detector's class head overfits synthetic heading *appearance* and collapses real-doc
-    headings to 'text'. Layout geometry (centering, relative height, width) transfers across domains
-    far better, so we use it to recover headings:
-      - centered + not full-width  -> title (large) / section_header (smaller)
-      - left-margin + short + taller-than-body -> section_header (e.g. article markers)
-    The learned class is kept for table_cell / form_* / list_item, where geometry alone is weak;
-    geometry only overrides the text<->heading confusion.
+    V2 trains the class head on diverse layouts so its predictions are reliable for production
+    structure — therefore we no longer override a confident learned class. Geometry is used only to
+    disambiguate the generic ``text`` default: an unmarked line that is genuinely centred + short (a
+    heading the head left as text) is promoted. Everything else, including title / section_header /
+    list_item / table_cell / form_* / image / formula, is kept exactly as predicted.
     """
     if not lines:
         return lines
     heights = sorted(l["box"][3] - l["box"][1] for l in lines)
     med_h = heights[len(heights) // 2] or 1
-    widths = [l["box"][2] - l["box"][0] for l in lines]
-    med_w = sorted(widths)[len(widths) // 2] or 1
 
     for l in lines:
+        if classes[l.get("cls", 0)] != "text":
+            continue                                   # trust the learned class
         x1, y1, x2, y2 = l["box"]
         w, h = x2 - x1, y2 - y1
         cx = (x1 + x2) / 2
-        learned = CLASSES[l.get("cls", 0)]
-        # keep structural classes the geometry can't judge well
-        if learned in ("table_cell", "form_label", "form_value", "list_item"):
-            l["cls"] = l.get("cls", 0)
-            continue
-        center_off = abs(cx - page_w / 2) / page_w          # 0 = perfectly centered
-        left_margin = x1 / page_w
+        center_off = abs(cx - page_w / 2) / page_w
+        left_margin, right_margin = x1 / page_w, (page_w - x2) / page_w
         width_frac = w / page_w
         tall = h >= med_h * 1.15
-        centered = center_off < 0.12 and width_frac < 0.85   # centered and not full-width
+        # genuinely centred + short = a heading the head defaulted to text (symmetric margins reject
+        # indented body lines that merely balance near the page centre).
+        centered = (center_off < 0.10 and abs(left_margin - right_margin) < 0.10
+                    and left_margin > 0.12 and width_frac < 0.55)
         if centered and tall:
-            l["cls"] = _cls_id("title")
+            l["cls"] = _cls_id("title", classes)
         elif centered:
-            l["cls"] = _cls_id("section_header")
+            l["cls"] = _cls_id("heading", classes)
         elif tall and width_frac < 0.45 and left_margin < 0.2:
-            # short, left, larger-than-body line = a heading/marker (e.g. មាត្រា១)
-            l["cls"] = _cls_id("section_header")
-        else:
-            l["cls"] = _cls_id("text")
+            l["cls"] = _cls_id("heading", classes)   # short left marker (e.g. មាត្រា១)
     return lines
 
 
@@ -133,12 +132,16 @@ def reading_order(lines: list[Line], page_w: float) -> list[int]:
     return order
 
 
-def merge_lines_to_blocks(ordered: list[Line], page_w: float) -> list[Line]:
+_NUMBERED_START = re.compile(r"^\s*(?:[០-៩]+|\d+)[.)]|^\s*[ក-អ][.)]\s|^\s*[-•]\s")
+
+
+def merge_lines_to_blocks(ordered: list[Line], page_w: float, classes: list = CLASSES) -> list[Line]:
     """Merge consecutive lines with small vertical gap + similar left edge into block units.
 
     Class-aware: only merges lines of the SAME region-type and only for flowing types (text,
     list_item, form_value, caption). Titles, headers, and table cells stay as their own units so
-    document structure is preserved.
+    document structure is preserved. A line that STARTS with numbering (១. / 1. / ក) / -) begins a
+    new unit — otherwise numbered questions collapse into one run-on paragraph.
     """
     if not ordered:
         return []
@@ -150,18 +153,19 @@ def merge_lines_to_blocks(ordered: list[Line], page_w: float) -> list[Line]:
         x1, y1, x2, y2 = ln["box"]
         cls = ln.get("cls", 0)
         if cur is None:
-            cur = {"box": list(ln["box"]), "text": ln["text"], "cls": cls}
+            cur = {**ln, "box": list(ln["box"])}
             continue
         cx1, cy1, cx2, cy2 = cur["box"]
         v_gap = y1 - cy2
         same_left = abs(x1 - cx1) < med_h * 1.5
-        flowing = CLASSES[cls] in ("text", "list_item", "form_value", "caption")
-        if cls == cur["cls"] and flowing and -med_h * 0.3 <= v_gap <= med_h * 1.3 and same_left:
+        flowing = classes[cls] in ("text", "list_item", "form_value", "caption")
+        if cls == cur["cls"] and flowing and -med_h * 0.3 <= v_gap <= med_h * 1.3 and same_left \
+                and not _NUMBERED_START.match(ln.get("text", "")):
             cur["box"] = [min(cx1, x1), min(cy1, y1), max(cx2, x2), max(cy2, y2)]
             cur["text"] += ln["text"]        # Khmer flows without spaces across line breaks
         else:
             blocks.append(cur)
-            cur = {"box": list(ln["box"]), "text": ln["text"], "cls": cls}
+            cur = {**ln, "box": list(ln["box"])}    # preserve extra keys (e.g. fig_index)
     if cur:
         blocks.append(cur)
     return blocks
@@ -191,21 +195,101 @@ def _reconstruct_table(cells: list[Line]) -> str:
     return "\n".join(md)
 
 
-def build_markdown(blocks: list[Line]) -> str:
+def build_markdown(blocks: list[Line], classes: list = CLASSES) -> str:
     """Render assembled blocks to structured markdown via region types (headings/lists/tables)."""
     out: list[str] = []
     i = 0
     while i < len(blocks):
-        name = CLASSES[blocks[i].get("cls", 0)]
-        if name == "table_cell":
+        name = classes[blocks[i].get("cls", 0)]
+        if name in ("table_head", "table_cell"):
             run = []
-            while i < len(blocks) and CLASSES[blocks[i].get("cls", 0)] == "table_cell":
+            while i < len(blocks) and classes[blocks[i].get("cls", 0)] in ("table_head", "table_cell"):
                 run.append(blocks[i]); i += 1
             out.append(_reconstruct_table(run))
             continue
+        if name in _NONTEXT:
+            fi = blocks[i].get("fig_index")
+            out.append(f"![{name}](figure_{fi})" if fi is not None else f"![{name}]()")
+            i += 1; continue
+        if name == "formula":
+            t = blocks[i]["text"].strip()
+            out.append(f"$$ {t} $$" if t else "$$ [រូបមន្ត] $$")
+            i += 1; continue
+        if (name == "form_label" and i + 1 < len(blocks)
+                and classes[blocks[i + 1].get("cls", 0)] == "form_value"):
+            out.append(f"**{blocks[i]['text']}** {blocks[i + 1]['text']}".strip())
+            i += 2; continue
         out.append(_MD.get(name, lambda t: t)(blocks[i]["text"]))
         i += 1
     return "\n\n".join(out)
+
+
+def _table_rows(cells: list[Line]) -> list[list[str]]:
+    """Group table_cell units into rows (y-overlap) x columns (x order). Shared by md + html."""
+    cells = sorted(cells, key=lambda c: c["box"][1])
+    heights = sorted(c["box"][3] - c["box"][1] for c in cells)
+    tol = (heights[len(heights) // 2] or 10) * 0.7
+    rows: list[list[Line]] = []
+    for c in cells:
+        if rows and abs(c["box"][1] - rows[-1][0]["box"][1]) <= tol:
+            rows[-1].append(c)
+        else:
+            rows.append([c])
+    ncol = max(len(r) for r in rows)
+    return [[c["text"] for c in sorted(r, key=lambda c: c["box"][0])] + [""] * (ncol - len(r))
+            for r in rows]
+
+
+def _esc(t: str) -> str:
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_html(blocks: list[Line], classes: list = CLASSES) -> str:
+    """Render assembled blocks to structured HTML (headings, lists, <table> like OCR studios)."""
+    out: list[str] = []
+    i = 0
+    while i < len(blocks):
+        name = classes[blocks[i].get("cls", 0)]
+        if name in ("table_head", "table_cell"):
+            run = []
+            while i < len(blocks) and classes[blocks[i].get("cls", 0)] in ("table_head", "table_cell"):
+                run.append(blocks[i]); i += 1
+            rows = _table_rows(run)
+            if not rows:
+                continue
+            head, *body = rows
+            html = ["<table>", "  <thead>", "    <tr>"]
+            html += [f"      <th>{_esc(c)}</th>" for c in head]
+            html += ["    </tr>", "  </thead>", "  <tbody>"]
+            for r in body:
+                html.append("    <tr>")
+                html += [f"      <td>{_esc(c)}</td>" for c in r]
+                html.append("    </tr>")
+            html += ["  </tbody>", "</table>"]
+            out.append("\n".join(html))
+            continue
+        if name in _NONTEXT:
+            fi = blocks[i].get("fig_index")
+            # data-figure lets the viewer swap in the actual cropped image (data URL)
+            out.append(f'<img class="{name}" data-figure="{fi}" alt="{name}">' if fi is not None
+                       else f'<div class="figure-ph {name}">[{name}]</div>')
+            i += 1; continue
+        if name == "formula":
+            t = _esc(blocks[i]["text"].strip())
+            out.append(f'<pre class="formula">{t or "[រូបមន្ត]"}</pre>')
+            i += 1; continue
+        if (name == "form_label" and i + 1 < len(blocks)
+                and classes[blocks[i + 1].get("cls", 0)] == "form_value"):
+            out.append(f"<p><strong>{_esc(blocks[i]['text'])}</strong> {_esc(blocks[i + 1]['text'])}</p>")
+            i += 2; continue
+        t = _esc(blocks[i]["text"])
+        tag = {"title": f"<h1>{t}</h1>", "heading": f"<h2>{t}</h2>",
+               "subheading": f"<h3>{t}</h3>", "section_header": f"<h2>{t}</h2>",
+               "list_item": f"<li>{t}</li>", "caption": f"<figcaption>{t}</figcaption>",
+               "form_label": f"<strong>{t}</strong>"}.get(name, f"<p>{t}</p>")
+        out.append(tag)
+        i += 1
+    return "\n".join(out)
 
 
 def to_grounded(units: list[Line], page_w: float, page_h: float) -> str:
@@ -219,17 +303,23 @@ def to_grounded(units: list[Line], page_w: float, page_h: float) -> str:
 
 
 def assemble(lines: list[Line], page_w: float, page_h: float, merge_blocks: bool = True,
-             refine: bool = True) -> dict:
-    """Full assembly. Returns {order, line_units, block_units, grounded_lines, grounded_blocks}."""
+             refine: bool = True, classes: list = CLASSES) -> dict:
+    """Full assembly. Returns {order, line_units, block_units, grounded_lines, grounded_blocks}.
+
+    `classes` is the detector's class list (default V3 CLASSES); pass CLASSES_V4 for the V4 detector
+    so cls ids resolve to the right region names.
+    """
     if refine:
-        lines = refine_structure(lines, page_w)
+        lines = refine_structure(lines, page_w, classes)
     order = reading_order(lines, page_w)
     ordered = [lines[i] for i in order]
-    blocks = merge_lines_to_blocks(ordered, page_w) if merge_blocks else ordered
+    blocks = merge_lines_to_blocks(ordered, page_w, classes) if merge_blocks else ordered
     return {
         "line_units": ordered,
         "block_units": blocks,
         "grounded_lines": to_grounded(ordered, page_w, page_h),
         "grounded_blocks": to_grounded(blocks, page_w, page_h),
-        "markdown": build_markdown(blocks),   # structured: headings, lists, tables
+        "markdown": build_markdown(blocks, classes),   # structured: headings, lists, tables
+        "html": build_html(blocks, classes),           # HTML with <table> (OCR-studio style)
+        "text": "\n".join(b["text"] for b in blocks),   # plain text, reading order
     }

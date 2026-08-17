@@ -7,6 +7,15 @@
     font-family: 'RenderFont';
     src: url(data:font/ttf;base64,{{ font_b64 }});
   }
+  {% if title_font_b64 %}
+  @font-face {
+    font-family: 'TitleFont';
+    src: url(data:font/ttf;base64,{{ title_font_b64 }});
+  }
+  h1, h2, h3 { font-family: 'TitleFont', 'RenderFont', sans-serif; }
+  {% endif %}
+  {% if heading_color %}h1, h2, h3 { color: {{ heading_color }}; }{% endif %}
+  {% if ink_values %}.form-value { color: #1a3a8f; font-style: italic; }{% endif %}
   html, body { margin: 0; padding: 0; background: {{ bg }}; }
   #page {
     width: {{ width }}px;
@@ -20,44 +29,71 @@
     letter-spacing: {{ letter_spacing }}px;
     color: {{ color }};
     text-align: {{ align }};
-    {% if columns > 1 %}column-count: {{ columns }}; column-gap: 36px;{% endif %}
+    {% if page_border %}border: {{ page_border }};{% endif %}
+    {% if columns > 1 %}column-count: {{ columns }}; column-gap: {{ column_gap | default(36) }}px;{% endif %}
   }
-  h1 { font-size: {{ title_px }}px; line-height: 1.3; margin: 0 0 .5em; {% if columns > 1 %}column-span: all;{% endif %} }
-  h2 { font-size: {{ header_px }}px; line-height: 1.3; margin: .8em 0 .3em; }
+  h1 { font-size: {{ title_px }}px; line-height: 1.3; margin: 0 0 .5em; clear: both; {% if columns > 1 %}column-span: all;{% endif %} }
+  h2 { font-size: {{ header_px }}px; line-height: 1.3; margin: .8em 0 .3em; clear: both; }
+  h3 { font-size: {{ (header_px * 0.82) | round | int }}px; line-height: 1.3; margin: .7em 0 .25em; font-weight: 600; clear: both; }
   p  { margin: 0 0 .8em; }
-  ul { margin: 0 0 .8em 1.2em; padding: 0; }
+  ul, ol { margin: 0 0 .8em 1.2em; padding: 0; }
   li { margin: .2em 0; }
-  .byline { font-size: {{ (body_px * 0.8) | round | int }}px; color: #555; margin: 0 0 1em; }
+  .caption { font-size: {{ (body_px * 0.8) | round | int }}px; color: #555; margin: 0 0 1em; }
   table { border-collapse: collapse; width: 100%; margin: 0 0 1em; {% if columns > 1 %}column-span: all;{% endif %} }
-  th, td { border: 1px solid #888; padding: 6px 10px; text-align: left; vertical-align: top; }
+  th, td { border: {{ table_border | default('1px solid #888') }}; padding: 6px 10px; text-align: left; vertical-align: top; }
   th { font-weight: 700; background: #f0f0f0; }
   .form-row { display: flex; gap: 14px; margin: .35em 0; align-items: baseline; }
-  .form-label { font-weight: 700; min-width: 35%; }
-  .form-value { flex: 1; border-bottom: 1px dotted #aaa; }
+  .form-label { font-weight: 700; min-width: 32%; }
+  .form-value { flex: 1; {% if dotted_values %}border-bottom: 1px dotted #aaa;{% endif %} }
+  .fig { display: block; margin: .6em auto; border: 1px solid #bbb; border-radius: 4px; }
+  .formula { margin: .8em 0; text-align: center; font-style: italic;
+             font-family: 'Cambria Math','Latin Modern Math',serif; }
 </style>
 </head>
 <body>
-<div id="page">
-{% for b in blocks %}
+{#- render_block: one block of any type. Recursive via the 'band' branch (V5 compose engine):
+    a band is a flex row of auto-height columns, each holding ordinary blocks — text can never be
+    clipped (no fixed heights), so DOM text always equals visible text and the round-trip holds. -#}
+{% macro render_block(b) %}
   {% if b.type == 'title' %}
     <h1 data-block-type="title">{{ b.text }}</h1>
-  {% elif b.type == 'byline' %}
-    <p class="byline" data-block-type="caption">{{ b.text }}</p>
-  {% elif b.type == 'section_header' %}
-    <h2 data-block-type="section_header">{{ b.text }}</h2>
+  {% elif b.type == 'heading' %}
+    <h2 data-block-type="heading">{{ b.text }}</h2>
+  {% elif b.type == 'subheading' %}
+    <h3 data-block-type="subheading">{{ b.text }}</h3>
+  {% elif b.type == 'caption' %}
+    <p class="caption" data-block-type="caption" {% if b.center %}style="text-align:center;"{% endif %}>{{ b.text }}</p>
   {% elif b.type == 'text' %}
-    <p data-block-type="text">{{ b.text }}</p>
+    {# emphasis run: pre+emph+post is an exact partition of b.text, so textContent == b.text and
+       the round-trip holds; boundaries are space-only (set in sampler) so Khmer shaping is safe.
+       NO whitespace may appear between the expressions inside <p>. #}
+    {% if b.numgap is defined %}<p data-block-type="text">{{ b.pre }}<span style="display:inline-block;width:{{ b.numgap }}px;"></span>{{ b.post }}</p>{% elif b.emph is defined %}<p data-block-type="text">{{ b.pre }}{% if b.emph_style == 'bold' %}<b>{{ b.emph }}</b>{% elif b.emph_style == 'underline' %}<u>{{ b.emph }}</u>{% else %}<mark style="background:#fff176;color:inherit;">{{ b.emph }}</mark>{% endif %}{{ b.post }}</p>{% else %}<p data-block-type="text">{{ b.text }}</p>{% endif %}
   {% elif b.type == 'list' %}
-    <ul>{% for it in b['items'] %}<li data-block-type="list_item">{{ it }}</li>{% endfor %}</ul>
+    {# markerless on purpose: CSS ::marker boxes are invisible to Range.getClientRects, so marker
+       numbering trains the detector to exclude leading numerals — numbering is inline in the text #}
+    <ul style="list-style:none; margin:0 0 .8em; padding:0 0 0 {{ b.indent | default(18) }}px;">{% for it in b['items'] %}<li data-block-type="list_item">{{ it }}</li>{% endfor %}</ul>
+  {% elif b.type == 'bubbles' %}
+    {# item_type distinguishes the ONE-container word bank (`word_bank`) from a row of per-word
+       bubbles (`list_item`). They look alike but carry opposite box counts, so labelling both
+       `list_item` taught the detector two contradictory targets — see build_obj_targets CLASSES_V6. #}
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin:.5em 0; justify-content:{{ b.justify | default('flex-start') }};">{% for it in b['items'] %}<span data-block-type="{{ b.item_type | default('list_item') }}" style="border:{{ b.border_px | default(1.6) }}px solid {{ b.color | default('#cc3333') }}; border-radius:{{ b.radius | default(20) }}px; padding:6px 18px; display:inline-block;{% if b.word_spacing %} word-spacing:{{ b.word_spacing }}px;{% endif %}">{{ it }}</span>{% endfor %}</div>
   {% elif b.type == 'table' %}
     <table>
-      {% if b.header %}<tr>{% for h in b.header %}<th data-block-type="table_cell" data-tbl="{{ b.tid }}" data-row="0" data-col="{{ loop.index0 }}">{{ h }}</th>{% endfor %}</tr>{% endif %}
-      {% for row in b.rows %}<tr>{% for c in row %}<td data-block-type="table_cell" data-tbl="{{ b.tid }}" data-row="{{ loop.index }}" data-col="{{ loop.index0 }}">{{ c }}</td>{% endfor %}</tr>{% endfor %}
+      {% if b.header %}<tr>{% for h in b.header %}<th data-block-type="table_head" data-tbl="{{ b.tid }}" data-row="0" data-col="{{ loop.index0 }}">{{ h }}</th>{% endfor %}</tr>{% endif %}
+      {% for row in b.rows %}{% set ridx = loop.index %}<tr>{% for c in row %}<td data-block-type="table_cell" data-tbl="{{ b.tid }}" data-row="{{ ridx }}" data-col="{{ loop.index0 }}">{{ c }}</td>{% endfor %}</tr>{% endfor %}
     </table>
   {% elif b.type == 'form' %}
     {% for f in b.fields %}<div class="form-row"><span class="form-label" data-block-type="form_label">{{ f.label }}</span><span class="form-value" data-block-type="form_value">{{ f.value }}</span></div>{% endfor %}
+  {% elif b.type in ('image', 'chart', 'signature', 'hand_drawing') %}
+    {% if b.img_url %}<img class="fig" data-block-type="{{ b.type }}" src="{{ b.img_url }}" style="width:{{ b.w }}px; height:{{ b.h }}px; object-fit:{{ 'contain' if b.type in ('signature','hand_drawing') else 'cover' }};{% if b.float %}float:{{ b.float }}; margin:6px 14px;{% endif %}{% if b.round %}border-radius:50%;{% endif %}">{% else %}<div class="fig" data-block-type="{{ b.type }}" style="width:{{ b.w }}px; height:{{ b.h }}px; background:{{ b.bg | default('linear-gradient(135deg,#ccd,#889)') }};{% if b.float %}float:{{ b.float }}; margin:6px 14px;{% endif %}"></div>{% endif %}
+  {% elif b.type == 'formula' %}
+    <div class="formula" data-block-type="formula" style="font-size:{{ (body_px * 1.1) | round | int }}px;">{{ b.text }}</div>
+  {% elif b.type == 'band' %}
+    <div style="display:flex; gap:{{ b.gap | default(28) }}px; align-items:flex-start; margin:0 0 .8em;{% if b.rule %} border-top:1px solid #999; padding-top:.6em;{% endif %}">{% for col in b.cols %}<div style="flex:{{ col.flex | default(1) }}; min-width:0;">{% for ch in col.blocks %}{{ render_block(ch) }}{% endfor %}</div>{% endfor %}</div>
   {% endif %}
-{% endfor %}
+{% endmacro %}
+<div id="page">
+{% for b in blocks %}{{ render_block(b) }}{% endfor %}
 </div>
 </body>
 </html>

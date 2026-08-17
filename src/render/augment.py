@@ -49,6 +49,43 @@ def _rotate(img, leaves, deg):
     return img
 
 
+def _light_gradient(img, rng):
+    """Phone-capture illumination: smooth diagonal/radial brightness falloff (box-safe)."""
+    h, w = img.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    if rng.random() < 0.5:                                     # diagonal
+        t = (xx / w * rng.choice([-1, 1]) + yy / h * rng.choice([-1, 1]))
+        t = (t - t.min()) / max(1e-6, t.max() - t.min())
+    else:                                                      # radial hot-spot
+        cx, cy = rng.uniform(0.2, 0.8) * w, rng.uniform(0.2, 0.8) * h
+        t = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        t /= max(1e-6, t.max())
+    lo = rng.uniform(0.72, 0.88)
+    mask = lo + (1.04 - lo) * (1.0 - t)
+    return (img.astype(np.float32) * mask[..., None]).clip(0, 255).astype(np.uint8)
+
+
+def _bleed_through(img, rng):
+    """Back-page ink ghosting: the page mirrored, blurred, and lightly multiplied in (box-safe)."""
+    ghost = cv2.flip(img, 1)
+    k = rng.choice([7, 9, 11])
+    ghost = cv2.GaussianBlur(ghost, (k, k), 0)
+    a = rng.uniform(0.06, 0.16)
+    ghost_light = 255.0 - a * (255.0 - ghost.astype(np.float32))   # faint version of back ink
+    return (img.astype(np.float32) * ghost_light / 255.0).clip(0, 255).astype(np.uint8)
+
+
+def _copier_bands(img, rng):
+    """Photocopier horizontal brightness banding (box-safe)."""
+    h = img.shape[0]
+    period = rng.uniform(60, 220)
+    phase = rng.uniform(0, 2 * np.pi)
+    depth = rng.uniform(0.03, 0.08)
+    rows = 1.0 - depth * (0.5 + 0.5 * np.sin(2 * np.pi * np.arange(h) / period + phase))
+    return (img.astype(np.float32) * rows[:, None, None].astype(np.float32)) \
+        .clip(0, 255).astype(np.uint8)
+
+
 def _shadow(img, rng):
     h, w = img.shape[:2]
     mask = np.ones((h, w), np.float32)
@@ -103,6 +140,13 @@ def augment(png: bytes, leaves: list[dict], cfg: dict, rng: random.Random) -> tu
     pa = cfg.get("paper", {})
     if rng.random() < pa.get("shadow_prob", 0.0):
         img = _shadow(img, rng)
+    # V5 capture realism (all photometric -> boxes untouched)
+    if rng.random() < pa.get("light_gradient_prob", 0.0):
+        img = _light_gradient(img, rng)
+    if rng.random() < pa.get("bleed_through_prob", 0.0):
+        img = _bleed_through(img, rng)
+    if rng.random() < pa.get("copier_band_prob", 0.0):
+        img = _copier_bands(img, rng)
 
     cm = cfg.get("compression", {})
     if rng.random() < cm.get("jpeg_prob", 0.0):

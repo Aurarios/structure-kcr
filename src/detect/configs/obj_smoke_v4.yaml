@@ -1,0 +1,36 @@
+# V4 FCOS overfit/smoke gate — trains on the small smoke set to prove model+loss+assignment are
+# correct before any large run. Use with: --config obj_smoke_v4 --smoke 30
+profile: single
+seed: 42
+
+manifests:
+  train: data/manifests_v3_smoke/train.jsonl
+  val:   data/manifests_v3_smoke/val.jsonl
+image_size: 768               # smaller -> faster overfit iterations
+
+batch_size_per_device: 2
+grad_accum_steps: 1
+num_workers: 2
+
+epochs: 100                   # overfit a tiny set
+optimizer:
+  type: adamw
+  lr: 1.5e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 50
+gradient_clip_norm: 5.0
+mixed_precision: bf16
+
+score_thresh: 0.25
+nms_iou: 0.5
+max_det: 300
+
+eval_every_steps: 300
+eval_max_pages: 20
+save_every_steps: 100000
+ckpt_dir: data/checkpoints/detector_obj_v4_smoke
+keep_last_n_ckpts: 1
+log_every_steps: 50

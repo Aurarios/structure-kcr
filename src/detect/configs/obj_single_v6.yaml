@@ -1,0 +1,72 @@
+# V6 FCOS layout detector — --single (RTX 4070 Ti 12GB), trained on the V6 dataset.
+# vs V5, three changes, all motivated by measured real-document failures:
+#   1. taxonomy v6 (17 classes): `word_bank` split from `list_item`. V5 labelled the one-container
+#      word row and the per-word bubble row identically, so the detector hedged (0.11-0.59 conf on
+#      a real worksheet) and emitted competing whole-row boxes. The ambiguity is WITHIN a layout
+#      (both patterns occur in worksheets, sometimes on one page), so distinct labels are the only
+#      fix — layout conditioning cannot resolve it.
+#   2. layout_head: auxiliary page-level layout classifier (multi-task, +72.5K params, ignored at
+#      inference). Adds page context to shared features WITHOUT a cascade whose stage-1 errors
+#      would propagate. A hard layout-first router was evaluated and rejected.
+#   3. data: numbering prefixes now absorb a parenthetical qualifier ('១.(២០១៥)') so the hanging
+#      indent lands after the whole group; _f_bubbles weight raised so the new class has support.
+profile: single
+seed: 42
+
+taxonomy: v6               # 17 classes (CLASSES_V6); "v4" = frozen 16-class set
+layout_head: true          # auxiliary page-layout classification head
+layout_loss_weight: 0.1    # deliberately small: shape features, don't compete with detection
+
+manifests:
+  train: data/manifests_v6/train.jsonl
+  val:   data/manifests_v6/val.jsonl
+image_size: 1024
+
+batch_size_per_device: 8     # resnet18 FCOS @1024px bf16; eff batch 16
+grad_accum_steps: 2
+num_workers: 10
+
+epochs: 4
+optimizer:
+  type: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+gradient_clip_norm: 5.0
+mixed_precision: bf16
+
+# decode (inference / eval). score_thresh is the fallback for classes not listed below.
+score_thresh: 0.3
+nms_iou: 0.5
+max_det: 300
+
+# Per-class thresholds carried over from the v5 sweep as a STARTING POINT. Re-sweep after training
+# (`python -m src.eval.det_eval --sweep`) — v6 scores are not comparable to v5's, and `word_bank`
+# has no v5 entry so it falls back to score_thresh until swept.
+score_thresh_per_class:
+  text:         0.15
+  caption:      0.15
+  form_label:   0.15
+  form_value:   0.15
+  list_item:    0.20
+  subheading:   0.20
+  title:        0.20
+  formula:      0.20
+  table_head:   0.20
+  heading:      0.25
+  signature:    0.25
+  table:        0.30
+  table_cell:   0.30
+  image:        0.40
+  chart:        0.40
+  hand_drawing: 0.40
+
+eval_every_steps: 3000
+eval_max_pages: 400
+save_every_steps: 3000
+ckpt_dir: data/checkpoints/detector_obj_v6
+keep_last_n_ckpts: 5
+log_every_steps: 50

@@ -1,0 +1,39 @@
+# V4 FCOS object-detection layout detector — --single (RTX 4070 Ti 12GB).
+# Region-level detection (16 classes incl. table region + chart) on the V3 real-image synthetic set.
+# Additive: DBNet V1/V2/V3 checkpoints + code untouched; this writes detector_obj_v4.
+profile: single
+seed: 42
+
+manifests:
+  train: data/manifests_v3/train.jsonl
+  val:   data/manifests_v3/val.jsonl
+image_size: 1024
+
+batch_size_per_device: 8     # push GPU: resnet18 FCOS @1024px bf16; eff batch 16
+grad_accum_steps: 2
+num_workers: 10              # 20-core box: fast data loading (render is done before train)
+
+epochs: 4
+optimizer:
+  type: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+gradient_clip_norm: 5.0
+mixed_precision: bf16
+
+# decode (inference / eval)
+score_thresh: 0.3
+nms_iou: 0.5
+max_det: 300
+
+eval_every_steps: 3000
+eval_max_pages: 400
+save_every_steps: 3000
+# LINE-LEVEL detector (collect_obj_boxes line_level=True): separate dir from the block-level run
+ckpt_dir: data/checkpoints/detector_obj_v4_line
+keep_last_n_ckpts: 5
+log_every_steps: 50

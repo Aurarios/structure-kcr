@@ -16,16 +16,27 @@ from .. import khmer_utils as ku
 REF_OPEN, REF_CLOSE = "<|ref|>", "<|/ref|>"
 DET_OPEN, DET_CLOSE = "<|det|>", "<|/det|>"
 
-# block_type -> markdown prefix for the leaf's text
+# block_type -> markdown prefix for the leaf's text. (V3 uses heading/subheading; section_header is
+# kept so the frozen V1/V2 labels still convert.)
 _MD_PREFIX = {
     "title": "# ",
+    "heading": "## ",
+    "subheading": "### ",
     "section_header": "## ",
     "caption": "*",          # closed below
     "text": "",
     "list_item": "- ",
+    "word_bank": "",         # one rounded container holding a whole row of words -> plain line
+    "table_head": "",
     "form_label": "**",      # closed below
     "form_value": "",
 }
+
+# non-text regions (cropped at inference) -> VALID markdown image syntax `![alt](url)` so it
+# converts to <img> (a bare `![alt]` is literal text in CommonMark, not an image). The alt is the
+# class name so downstream HTML can style/identify it; the empty () is the placeholder destination.
+_NONTEXT_MD = {"image": "![image]()", "chart": "![chart]()", "signature": "![signature]()",
+               "hand_drawing": "![hand_drawing]()"}
 
 
 def _norm_box(bbox: list[float], w: float, h: float) -> list[int]:
@@ -45,6 +56,10 @@ def _md_text(leaf: dict) -> str:
         return f"*{t}*"
     if bt == "form_label":
         return f"**{t}**"
+    if bt in _NONTEXT_MD:
+        return _NONTEXT_MD[bt]      # non-text region placeholder (cropped at inference)
+    if bt == "formula":
+        return f"$$ {t} $$"         # display math -> converts to a math block in HTML
     return _MD_PREFIX.get(bt, "") + t
 
 
@@ -66,15 +81,21 @@ def build_markdown(leaves: list[dict]) -> str:
     n = len(leaves)
     while i < n:
         lf = leaves[i]
-        if lf["block_type"] == "table_cell":
+        if lf["block_type"] in ("table_head", "table_cell"):
             j = i
             tid = lf.get("tbl")
             cells = []
-            while j < n and leaves[j]["block_type"] == "table_cell" and leaves[j].get("tbl") == tid:
+            while (j < n and leaves[j]["block_type"] in ("table_head", "table_cell")
+                   and leaves[j].get("tbl") == tid):
                 cells.append(leaves[j])
                 j += 1
             out.append(_render_md_table(cells))
             i = j
+        elif (lf["block_type"] == "form_label" and i + 1 < n
+              and leaves[i + 1]["block_type"] == "form_value"):
+            # key:value field -> one line `**label** value` (converts to <strong>label</strong> value)
+            out.append(f"**{lf['text']}** {leaves[i + 1]['text']}".strip())
+            i += 2
         else:
             out.append(_md_text(lf))
             i += 1

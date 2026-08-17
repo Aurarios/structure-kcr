@@ -1,0 +1,40 @@
+# DBNet detector V2 — --single (RTX 4070 Ti 12GB). 11-class (adds image, formula), diverse layouts.
+# V1 (single.yaml) is left untouched; this trains a separate detector_single_v2 checkpoint.
+profile: single
+seed: 42
+
+manifests:                 # V2 diverse data (rendered by run_v2_build_train.ps1)
+  train: data/manifests_v2/train.jsonl
+  val:   data/manifests_v2/val.jsonl
+image_size: 1280         # raised 960->1280 to match inference + small card/book text
+shrink_ratio: 0.4
+
+batch_size_per_device: 6   # 1280px fits ~6/12GB in bf16
+grad_accum_steps: 2        # effective batch 12
+num_workers: 6
+
+epochs: 6                  # +1 epoch for the larger, more diverse layout set
+optimizer:
+  type: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1000
+gradient_clip_norm: 5.0
+
+mixed_precision: bf16
+
+# box decode (inference / eval)
+prob_thresh: 0.3
+box_unclip_ratio: 2.0
+edge_margin_frac: 0.18
+min_box_size: 4
+
+eval_every_steps: 2000
+eval_max_pages: 400
+save_every_steps: 5000
+ckpt_dir: data/checkpoints/detector_single_v2   # separate -> baked V1 detector_single intact
+keep_last_n_ckpts: 5
+log_every_steps: 50

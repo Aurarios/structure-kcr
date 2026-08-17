@@ -81,9 +81,15 @@ def decode_boxes(prob_map: np.ndarray, prob_thresh: float = 0.3,
         area = w * h
         perim = 2.0 * (w + h)
         d = area * unclip_ratio / perim if perim > 0 else 0.0
-        mh = max(3.0, h * edge_margin_frac)        # horizontal margin (recover edge glyphs)
-        x1, y1 = x - d - mh, y - d
-        x2, y2 = x + w + d + mh, y + h + d
+        # The rectangle unclip distance d scales with area/perimeter ~= h/2 for a WIDE line, so a
+        # plain symmetric expansion grows the box height by ~h on each side (x3 total) and the box
+        # bleeds into the lines above/below -> heavy vertical overlap. Decouple the axes: apply the
+        # full unclip HORIZONTALLY (lines have no horizontal neighbours; recovering edge glyphs is
+        # safe) but only a SMALL fraction VERTICALLY so boxes stay within their line band.
+        mh = max(3.0, h * edge_margin_frac)        # extra horizontal margin (edge glyphs)
+        dv = min(d, h * 0.25)                       # vertical expansion capped to 25% of box height
+        x1, y1 = x - d - mh, y - dv
+        x2, y2 = x + w + d + mh, y + h + dv
         box = [max(0.0, x1), max(0.0, y1), min(W_map, x2), min(H_map, y2)]
         scored.append((box, conf))
     return _nms(scored, iou_thresh=0.6)

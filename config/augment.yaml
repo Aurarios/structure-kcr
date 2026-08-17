@@ -6,10 +6,15 @@
 apply_prob: 0.85
 
 geometric:
-  rotate_deg: [-2.0, 2.0]        # small skew only; keeps boxes valid
+  # RENDER-TIME rotation is DISABLED: rotating the page turns each wide line's axis-aligned bbox
+  # into a much taller, loose box (a 900px line at 2deg adds ~31px to a ~30px line), so baked
+  # ground-truth boxes stop hugging the text. Skew/perspective robustness is instead added at TRAIN
+  # time by src/detect/data/dataset.py::_warp (recomputes valid boxes per epoch) and the recognizer's
+  # line-level aug. This keeps render-time labels tight & clean.
+  rotate_deg: [-2.0, 2.0]
   perspective_scale: [0.0, 0.03]
-  rotate_prob: 0.5
-  perspective_prob: 0.25
+  rotate_prob: 0.0               # was 0.5 — see note above
+  perspective_prob: 0.0          # was 0.25 — never implemented in augment.py anyway
 
 photometric:
   brightness: [-0.12, 0.12]
@@ -36,6 +41,10 @@ compression:
 paper:
   shadow_prob: 0.15              # soft corner/edge shadow to mimic flatbed scan
   texture_prob: 0.25            # overlay subtle paper grain
+  # V5 capture realism (photometric only -> boxes untouched)
+  light_gradient_prob: 0.25     # phone-capture illumination falloff (diagonal/radial)
+  bleed_through_prob: 0.12      # back-page ink ghosting (mirrored+blurred multiply)
+  copier_band_prob: 0.10        # photocopier horizontal brightness banding
 
 # guard: never let augmentation push boxes outside the image or collapse text;
 # box_sanity.py re-validates all boxes after augmentation.

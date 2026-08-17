@@ -7,16 +7,24 @@ Checks per label:
   - reading-order: y-centers largely non-decreasing for single-column pages (multi-column pages
     are exempt from the strict y check)
 
-    python -m src.validate.box_sanity [--max-show 10]
+    python -m src.validate.box_sanity [--max-show 10] [--root E:/kcr-v5]
 """
 from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from ..corpus.common import DATA
 
 LABELS = DATA / "synthetic" / "labels"
+
+
+def _label_files(root: Path | None) -> list:
+    if root is None:
+        return sorted(LABELS.glob("*.json")) or sorted(
+            (DATA / "synthetic").glob("*/labels/*.json"))
+    return sorted(Path(root).glob("*/labels/*.json"))
 SINGLE_COL_TEMPLATES = {"article_single", "doc_with_table", "form_label_value", "mixed_km_en"}
 
 
@@ -42,10 +50,10 @@ def _check_label(label: dict) -> list[str]:
     return issues
 
 
-def check(max_show: int) -> dict:
-    files = sorted(LABELS.glob("*.json"))
+def check(max_show: int, root: Path | None = None) -> dict:
+    files = _label_files(root)
     if not files:
-        print(f"No labels in {LABELS}. Run build_dataset first.")
+        print(f"No labels in {root or LABELS}. Run build_dataset first.")
         return {"total": 0, "clean": 0, "violations": 0}
 
     total = clean = 0
@@ -60,22 +68,24 @@ def check(max_show: int) -> dict:
             violation_pages += 1
             if shown < max_show:
                 shown += 1
-                print(f"\n✗ {f.name}")
+                print(f"\n[BAD] {f.name}")
                 for it in issues[:5]:
                     print(f"   - {it}")
     print(f"\nbox_sanity: {clean}/{total} clean, {violation_pages} pages with violations")
     if violation_pages == 0:
-        print("✓ GATE PASS")
+        print("[GATE PASS]")
     else:
-        print("✗ GATE FAIL — inspect boxes (often augmentation rotation or column breaks)")
+        print("[GATE FAIL] inspect boxes (often augmentation rotation or column breaks)")
     return {"total": total, "clean": clean, "violations": violation_pages}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="bounding-box sanity gate")
     ap.add_argument("--max-show", type=int, default=10)
+    ap.add_argument("--root", type=Path, default=None,
+                    help="versioned dataset root with <layout>/labels/*.json (e.g. E:/kcr-v5)")
     args = ap.parse_args()
-    res = check(args.max_show)
+    res = check(args.max_show, root=args.root)
     raise SystemExit(0 if res["violations"] == 0 else 1)
 
 

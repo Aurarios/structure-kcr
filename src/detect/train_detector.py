@@ -172,8 +172,10 @@ def main() -> None:
     g.add_argument("--single", action="store_true")
     g.add_argument("--parallel", action="store_true")
     ap.add_argument("--smoke", type=int, default=0, help="cap train rows for a quick smoke test")
+    ap.add_argument("--config", default=None,
+                    help="config name to load (e.g. single_v2); defaults to the profile name")
     args = ap.parse_args()
-    cfg = load_config("single" if args.single else "parallel")
+    cfg = load_config(args.config or ("single" if args.single else "parallel"))
     if args.smoke:
         cfg["_smoke"] = args.smoke
     train(cfg)

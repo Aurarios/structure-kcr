@@ -17,8 +17,20 @@ dist/
 
 # --- runtime logs ---
 *.log
+*.err
 /corpus_run.log
 /render_run.log
+
+# --- packaged inference bundle: model weights are 128MB of binaries. Kept out of git history
+# (irreversible bloat); ship them alongside a release or copy from data/checkpoints/.
+# The tokenizer (~470KB) IS committed since the bundle is unusable without it.
+/inference_v1/assets/checkpoints/
+
+# --- generated galleries + ad-hoc visual checks (regenerate: build_layout_gallery.py,
+# build_data_formulation.py) ---
+/data_formulation.html
+/layout_gallery.html
+/_r*_worksheet_check*.jpg
 
 # --- OS / editor ---
 .DS_Store
@@ -40,4 +52,9 @@ hf_token*
 .claude/
 
 # detector debug visualizations
-detected_boxes*.jpg
+detected_*.jpg
+
+# --- archived ad-hoc debug scripts/artifacts + tool outputs (V5 cleanup) ---
+/_debug_archive/
+/_dataset_viz*/
+/_browse*/

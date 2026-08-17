@@ -1,0 +1,43 @@
+# DBNet detector V3 — --single (RTX 4070 Ti 12GB). 15-class structured taxonomy (title/heading/
+# subheading/text/list_item/caption/table_head/table_cell/image/signature/hand_drawing/formula/
+# form_label/form_value), trained on the diverse REAL-IMAGE synthetic set (E:/kcr-v3, 350K pages).
+# V1 (single.yaml) and V2 (single_v2.yaml) are left untouched; this trains a separate
+# detector_single_v3 checkpoint. Class count is taken from build_det_targets.NUM_CLASSES (15).
+profile: single
+seed: 42
+
+manifests:                 # V3 data (rendered by run_v3_build_train.ps1)
+  train: data/manifests_v3/train.jsonl
+  val:   data/manifests_v3/val.jsonl
+image_size: 1280         # match inference; needed for small card/book/table text
+shrink_ratio: 0.4
+
+batch_size_per_device: 6   # 1280px fits ~6/12GB in bf16
+grad_accum_steps: 2        # effective batch 12
+num_workers: 6
+
+epochs: 4                  # 350K pages -> far more steps/epoch; 4 epochs is plenty
+optimizer:
+  type: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+gradient_clip_norm: 5.0
+
+mixed_precision: bf16
+
+# box decode (inference / eval). Vertical-expansion cap (dv=min(d,h*0.25)) lives in infer_detector.
+prob_thresh: 0.3
+box_unclip_ratio: 2.0
+edge_margin_frac: 0.18
+min_box_size: 4
+
+eval_every_steps: 3000
+eval_max_pages: 500
+save_every_steps: 6000
+ckpt_dir: data/checkpoints/detector_single_v3   # separate -> baked V1/V2 detectors intact
+keep_last_n_ckpts: 5
+log_every_steps: 50

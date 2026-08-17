@@ -112,11 +112,13 @@ def _resnet(name):
 # --------------------------------------------------------------------------- FPN neck + DB head
 
 class DBNet(nn.Module):
-    def __init__(self, backbone: str = "resnet18", inner: int = 256, k: int = 50):
+    def __init__(self, backbone: str = "resnet18", inner: int = 256, k: int = 50,
+                 num_classes: int = NUM_CLASSES):
         super().__init__()
         self.backbone = _resnet(backbone)
         ch = self.backbone.out_channels
         self.k = k
+        self.num_classes = num_classes
         # lateral 1x1 to `inner`
         self.lat = nn.ModuleList([nn.Conv2d(c, inner, 1, bias=False) for c in ch])
         # smooth 3x3 producing inner//4 each, then concat -> inner
@@ -132,7 +134,7 @@ class DBNet(nn.Module):
             )
         self.prob_head = head()
         self.thresh_head = head()
-        self.class_head = head(NUM_CLASSES)   # per-pixel region-type logits (0=background)
+        self.class_head = head(num_classes)   # per-pixel region-type logits (0=background)
 
     def _neck(self, feats):
         c2, c3, c4, c5 = feats
@@ -191,7 +193,7 @@ def _dice(pred, gt, mask):
 
 
 def db_loss(out: dict, batch: dict, alpha: float = 1.0, beta: float = 10.0,
-            gamma: float = 0.5) -> dict:
+            gamma: float = 1.0) -> dict:   # V2: raise class-loss weight for reliable region types
     ls = _ohem_bce(out["prob_logits"], batch["prob"], batch["prob_mask"])
     lb = _dice(out["binary"], batch["prob"], batch["prob_mask"])
     thr = batch["thresh"].unsqueeze(1)
@@ -214,9 +216,26 @@ PROFILES = {
 }
 
 
-def build_detector(profile: str = "single") -> DBNet:
+def build_detector(profile: str = "single", num_classes: int = NUM_CLASSES) -> DBNet:
     p = PROFILES[profile]
-    return DBNet(backbone=p["backbone"], inner=p["inner"])
+    return DBNet(backbone=p["backbone"], inner=p["inner"], num_classes=num_classes)
+
+
+def load_detector(ckpt_path, profile: str = "single", device: str = "cpu"):
+    """Load a detector checkpoint, sizing the class head to MATCH the checkpoint.
+
+    Keeps the baked V1 (9-class) checkpoint loadable even though the current taxonomy is 11-class:
+    the class-head output channels are read from the saved weights so both V1 and V2 load with the
+    same code. Returns (model, num_classes).
+    """
+    state = torch.load(ckpt_path, map_location="cpu")
+    sd = state.get("model", state)
+    # last layer of class_head is a ConvTranspose2d -> weight shape (in, out=num_classes, kH, kW)
+    nc = sd["class_head.6.weight"].shape[1] if "class_head.6.weight" in sd else NUM_CLASSES
+    model = build_detector(profile, num_classes=nc)
+    model.load_state_dict(sd)
+    model.eval().to(device)
+    return model, nc
 
 
 def count_params(m: nn.Module) -> int:

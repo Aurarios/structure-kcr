@@ -1,0 +1,62 @@
+# V5 FCOS layout detector — --single (RTX 4070 Ti 12GB), trained on the V5 generalized dataset
+# (style diversity + compositional engine + class-rebalanced; built by run_v5 renders -> E:/kcr-v5).
+# vs V4: tamer _warp GT inflation (obj_dataset.py) for tighter boxes; data closes the real-doc gaps.
+profile: single
+seed: 42
+
+manifests:
+  train: data/manifests_v5/train.jsonl
+  val:   data/manifests_v5/val.jsonl
+image_size: 1024
+
+batch_size_per_device: 8     # resnet18 FCOS @1024px bf16; eff batch 16
+grad_accum_steps: 2
+num_workers: 10
+
+epochs: 4
+optimizer:
+  type: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 1500
+gradient_clip_norm: 5.0
+mixed_precision: bf16
+
+# decode (inference / eval). score_thresh is the fallback for classes not listed below.
+score_thresh: 0.3
+nms_iou: 0.5
+max_det: 300
+
+# Per-class score thresholds, swept on v5 val @ step_00007128 (300 pages) with
+# `python -m src.eval.det_eval --sweep`; full curves in data/real_eval/det_eval_v5_sweep.json.
+# Text classes peak WELL below the 0.3 global default — on real scans their scores cluster at
+# 0.33-0.38, so a flat 0.3 was clipping real lines (a whole worksheet heading, the ID-card Khmer
+# title, half the card's form fields). Figure classes peak ABOVE it, which is what keeps a flat
+# low threshold from hallucinating `image`/`signature` boxes on blank or watermarked background.
+score_thresh_per_class:
+  text:         0.15
+  caption:      0.15
+  form_label:   0.15
+  form_value:   0.15
+  list_item:    0.20
+  subheading:   0.20
+  title:        0.20
+  formula:      0.20
+  table_head:   0.20
+  heading:      0.25
+  signature:    0.25
+  table:        0.30
+  table_cell:   0.30
+  image:        0.40
+  chart:        0.40
+  hand_drawing: 0.40
+
+eval_every_steps: 3000
+eval_max_pages: 400
+save_every_steps: 3000
+ckpt_dir: data/checkpoints/detector_obj_v5
+keep_last_n_ckpts: 5
+log_every_steps: 50

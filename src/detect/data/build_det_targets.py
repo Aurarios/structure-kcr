@@ -21,15 +21,24 @@ import numpy as np
 
 Box = tuple[float, float, float, float]
 
-# Region-type taxonomy (index 0 = background). Restores the document structure the flat
-# line-detector dropped: assembly maps these back to markdown (#, ##, -, tables, ...).
-CLASSES = ["background", "title", "section_header", "text", "list_item",
-           "caption", "form_label", "form_value", "table_cell"]
+# V3 region-type taxonomy (index 0 = background; 15 classes). See docs/layouts/README.md.
+# Assembly maps these back to markdown (#, ##, ###, -, tables, figures, ...).
+# Non-text regions (image / signature / hand_drawing / formula) are cropped at inference, not sent
+# to the text recognizer. `table_region` ("table layout") is NOT a pixel class — DBNet detects from
+# the text-probability map, and filling a whole table would bridge cell gaps and collapse the table
+# into one box; the table-layout box is reconstructed at assembly from cells sharing data-tbl.
+CLASSES = ["background", "title", "heading", "subheading", "text", "list_item", "caption",
+           "table_head", "table_cell", "image", "signature", "hand_drawing", "formula",
+           "form_label", "form_value"]
 CLASS_TO_ID = {c: i for i, c in enumerate(CLASSES)}
 NUM_CLASSES = len(CLASSES)
-# block_type values that don't map 1:1 to a class
-_BLOCK_TYPE_ALIAS = {"byline": "caption", "form": "form_value", "list": "list_item",
-                     "table": "table_cell"}
+# region types we crop (no text recognition) at inference time
+NONTEXT_CLASSES = {"image", "signature", "hand_drawing", "formula"}
+# legacy/synonym block_type values -> canonical V3 class (covers frozen V1/V2 labels too)
+_BLOCK_TYPE_ALIAS = {"section_header": "heading", "byline": "caption", "form": "form_value",
+                     "list": "list_item", "table": "table_cell", "table_region": "table_cell",
+                     "figure": "image", "photo": "image", "logo": "image", "stamp": "image",
+                     "chart": "image"}   # V3 DBNet has no chart class -> treat as image
 
 
 def _class_id(block_type: str | None) -> int:

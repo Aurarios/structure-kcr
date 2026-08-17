@@ -38,11 +38,12 @@ class Stem(nn.Module):
             _conv_bn(d // 2, d),
             _conv_bn(d, d), nn.MaxPool2d((2, 2)),                 # 12->6,  W->W/8
         )
-        self.h_pool = nn.AdaptiveAvgPool2d((1, None))             # 6->1, keep width
 
     def forward(self, x):
-        x = self.net(x)
-        x = self.h_pool(x)              # (B, d, 1, W/8)
+        x = self.net(x)                # (B, d, 6, W/8)
+        # collapse H by averaging the full height band. Mathematically identical to the previous
+        # AdaptiveAvgPool2d((1, None)) but ONNX-exportable (adaptive pooling needs a constant size).
+        x = x.mean(dim=2, keepdim=True)   # (B, d, 1, W/8)
         return x.squeeze(2).transpose(1, 2)    # (B, W/8, d)
 
 
@@ -122,6 +123,18 @@ class Recognizer(nn.Module):
         pad_mask = dec_inp.eq(self.pad_id)
         h = self.decoder(tgt, memory, tgt_mask=causal, tgt_key_padding_mask=pad_mask)
         return ctc_logits, self.out(h)
+
+    @torch.no_grad()
+    def ctc_greedy(self, images):
+        """Single-shot CTC decode from the auxiliary CTC head — NO autoregressive loop.
+
+        Returns the per-timestep argmax ids (B, T) as a python list-of-lists; collapse repeats +
+        drop the blank id with ``TextEncoder.ctc_collapse``. ~10-40x cheaper than ``greedy`` on CPU
+        because it is one encoder forward + one linear, with no sequential decoder steps. Quality is
+        lower than the attention head on Khmer reordering, so it is offered as a CPU "fast" path.
+        """
+        ctc_logits = self.ctc_head(self.encode(images))   # (B, T, V)
+        return ctc_logits.argmax(-1).tolist()
 
     @torch.no_grad()
     def greedy(self, images, bos, eos, max_len=None, no_repeat_ngram: int = 3):

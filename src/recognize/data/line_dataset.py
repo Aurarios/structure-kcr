@@ -73,7 +73,34 @@ def _aug(img: np.ndarray, rng: random.Random) -> np.ndarray:
             sigma = rng.uniform(3.0, 18.0)
             img = np.clip(img.astype(np.int16) + np.random.normal(0, sigma, img.shape).astype(np.int16),
                           0, 255).astype(np.uint8)
-        # 8) JPEG compression artifacts (lower quality than the training crops)
+        # 8) SEAL / STAMP overlay: translucent coloured rings (+ a chord line) composited over the
+        # crop so the recognizer learns to READ THROUGH official stamps. The text pixels underneath
+        # are only blended, never replaced, so the label stays correct. (Real-doc failure: the red
+        # ministry seal over the bottom lines produced garbage.)
+        if rng.random() < 0.15:
+            ov = img.copy()
+            color = rng.choice([(40, 40, 170), (60, 30, 130), (120, 50, 40)])   # BGR red/purple inks
+            cx, cy = rng.randint(0, w), rng.randint(0, h)
+            r = rng.randint(max(6, int(h * 0.55)), max(10, int(h * 1.7)))
+            cv2.circle(ov, (cx, cy), r, color, rng.randint(2, 5))
+            cv2.circle(ov, (cx, cy), max(3, int(r * 0.72)), color, rng.randint(1, 3))
+            if rng.random() < 0.5:
+                cv2.line(ov, (cx - r, cy), (cx + r, cy), color, rng.randint(1, 3))
+            a = rng.uniform(0.25, 0.55)
+            img = cv2.addWeighted(ov, a, img, 1 - a, 0)
+        # 10) ENCLOSING BORDER: word-bank bubbles / boxed answers / framed fields crop WITH their
+        # border, so the recognizer must read text inside a frame. (Real-doc failure: oval
+        # word-bank bubbles decoded as garbage — the model had never seen border strokes.)
+        if rng.random() < 0.12:
+            color = rng.choice([(40, 40, 170), (140, 60, 30), (30, 30, 30), (40, 120, 40)])
+            t = rng.randint(1, 3)
+            m = rng.randint(1, max(2, h // 8))
+            if rng.random() < 0.5:
+                cv2.rectangle(img, (m, m), (w - 1 - m, h - 1 - m), color, t)
+            else:                                      # oval: arcs clip the crop like real bubbles
+                cv2.ellipse(img, (w // 2, h // 2),
+                            (max(2, w - 2 * m) // 2, max(2, h - 2 * m) // 2), 0, 0, 360, color, t)
+        # 9) JPEG compression artifacts (lower quality than the training crops)
         if rng.random() < 0.4:
             q = rng.randint(35, 80)
             ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])

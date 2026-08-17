@@ -1,0 +1,7 @@
+# runtime / local — not part of the bundle
+venv/
+.venv/
+data/
+*.log
+__pycache__/
+*.pyc

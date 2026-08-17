@@ -1,0 +1,41 @@
+# Line recognizer — --parallel on 3x A5000 24GB (DDP), trained on the V3 real-image line crops.
+# accelerate launch --multi_gpu --num_processes 3 -m src.recognize.train_recognizer --parallel --config parallel_v3
+#
+# This is the recognizer that fixes the real-scan hallucination: V3 line crops carry the
+# scan-realistic augmentation (low-DPI, blur, JPEG, seal/stamp overlay) the V1 recognizer never saw.
+# Big paths live on /mnt/DATA_3 (root / is 97% full).
+profile: parallel
+seed: 42
+
+tokenizer_model: data/tokenizer/khmer_ocr.model
+lines_root: /mnt/DATA_1/pheng/kcr/recognize-v3/lines
+manifests:
+  train: /mnt/DATA_1/pheng/kcr/recognize-v3/lines/lines_train.jsonl
+  val:   /mnt/DATA_1/pheng/kcr/recognize-v3/lines/lines_val.jsonl
+max_w: 1200
+
+batch_size_per_device: 64     # x3 x accum4 = 768 effective. 256 & 128 OOM'd on 24GB at max_w=1200
+grad_accum_steps: 4           # (backward ~2x forward + wide-line padding). 64 -> ~13-14GB peak.
+num_workers: 10
+
+epochs: 6
+optimizer:
+  type: adamw
+  lr: 8.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 2000
+label_smoothing: 0.1
+ctc_weight: 0.3
+gradient_clip_norm: 1.0
+
+mixed_precision: bf16
+
+eval_every_steps: 1000
+eval_max_lines: 800
+save_every_steps: 2500
+ckpt_dir: /mnt/DATA_1/pheng/kcr/checkpoints/recognizer_parallel_v3
+keep_last_n_ckpts: 5
+log_every_steps: 25

@@ -12,7 +12,7 @@ batch_size_per_device: 8
 grad_accum_steps: 1
 num_workers: 6
 
-epochs: 10
+epochs: 5
 optimizer:
   type: adamw
   lr: 1.0e-3

@@ -1,0 +1,38 @@
+# Line recognizer V2 — --single (RTX 4070 Ti 12GB).
+# Trains on the English-rich V2 line crops (cards/bilingual/mixed) so Latin text on IDs/licences
+# reads correctly. V1 (single.yaml) + its recognizer_single checkpoint are left untouched.
+profile: single
+seed: 42
+
+tokenizer_model: data/tokenizer/khmer_ocr.model
+lines_root: E:/kcr-recognize-v2/lines
+manifests:
+  train: E:/kcr-recognize-v2/lines/lines_train.jsonl
+  val:   E:/kcr-recognize-v2/lines/lines_val.jsonl
+max_w: 800
+
+batch_size_per_device: 48
+grad_accum_steps: 4
+num_workers: 14
+
+epochs: 8
+optimizer:
+  type: adamw
+  lr: 5.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+scheduler:
+  type: cosine
+  warmup_steps: 2000
+label_smoothing: 0.1
+ctc_weight: 0.3
+gradient_clip_norm: 1.0
+
+mixed_precision: bf16
+
+eval_every_steps: 2000
+eval_max_lines: 800
+save_every_steps: 5000
+ckpt_dir: data/checkpoints/recognizer_single_v2   # separate -> baked V1 recognizer_single intact
+keep_last_n_ckpts: 5
+log_every_steps: 50

@@ -10,18 +10,45 @@ page:
     white_prob: 0.6
     paper_textures: [cream, light_gray, off_white]   # used when not pure white
 
-# Template mix (sampling weights). Matches chosen scope: clean printed + rich structured.
+# V3 layout mix (sampling weights). One entry per spec in docs/layouts/*.md; names MUST match the
+# generator keys in src/render/layout_sampler.py::_LAYOUTS. Weighted toward production pain points
+# (eKYC/cards, books, tables, worksheets). Real images are embedded from E:/kcr-assets.
 templates:
-  - name: article_single        # single-column news/blog article
-    weight: 3.0
-  - name: article_multicol      # 2-column article
+  - name: news_article          # single/2-col news: headline, byline, body, inline figure
     weight: 2.0
-  - name: doc_with_table        # body text + one or more tables
+  - name: magazine_multicol     # 2-3 column magazine, multiple figures
+    weight: 1.5
+  - name: scientific_paper      # abstract, numbered sections, figures, equations, references
+    weight: 1.5
+  - name: business_report       # headings, body, charts, tables, KPI callouts
+    weight: 1.5
+  - name: financial_statement   # dense multi-table financial grids, totals
+    weight: 1.5
+  - name: form_generic          # label:value fields, checkboxes, signature line
+    weight: 1.5
+  - name: id_card               # eKYC: portrait, logo/flag, bilingual fields, signature, MRZ
+    weight: 2.5
+  - name: passport_mrz          # passport page: portrait, fields, 2-line MRZ
+    weight: 1.5
+  - name: book_page             # chapter/heading, body, figure, page number/footer
     weight: 2.0
-  - name: form_label_value      # label:value form / ID-card-like fields
+  - name: textbook_figures      # dense text + multiple captioned figures + formulas
     weight: 1.5
-  - name: mixed_km_en           # Khmer body with embedded English terms/numbers
+  - name: worksheet             # numbered questions, dotted fill-ins, word banks, picture prompts
+    weight: 2.0
+  - name: exam_paper            # header block, numbered questions, multiple-choice, marks
     weight: 1.5
+  - name: receipt_invoice       # key:value header, items table, totals, stamp
+    weight: 1.5
+  - name: certificate           # centered titles, body, signature(s), official seal
+    weight: 1.5
+  - name: letter_memo           # letterhead/logo, date, salutation, body, signature
+    weight: 1.0
+  - name: contract_legal        # numbered clauses, sub-clauses, signature blocks, stamp
+    weight: 1.5
+  - name: composed              # V5 compositional engine: procedural band scaffold + stratified
+    weight: 26.5                #   element packing (compose_engine.py). 26.5 = sum of the 16
+                                #   curated weights -> ~50% of pages are engine-composed.
 
 typography:
   body_font_px: [16, 26]
@@ -31,26 +58,58 @@ typography:
   text_color_dark: ["#101010", "#1a1a2e", "#222222"]
   align: [left, justify]
 
+# V5 style generalization — closes the measured synthetic->real gaps: colored text (the exam-paper
+# failure), per-page font pairing (Muol-style titles), emphasis runs, ruled paper, pen-ink form
+# values, mixed Khmer/Latin/digit content, page-geometry variety. All sampled in
+# layout_sampler.sample_page; rendering/labeling are unchanged (DOM boxes are style-agnostic).
+style:
+  colored_text_prob: 0.30        # body ink is a non-black color (textbooks/exams print in color)
+  text_palette: ["#1a3a8f", "#16356b", "#8f1a1a", "#1f5c2e", "#3a2a78", "#234e70"]
+  heading_color_prob: 0.40       # headings/title get their own color
+  heading_palette: ["#8f1a1a", "#1a3a8f", "#b03020", "#205080", "#207040", "#7a1fa2", "#b06000"]
+  title_font_prob: 0.55          # independent title font (real Khmer docs pair Muol-ish + body)
+  emph_prob: 0.25                # one bold/underline/highlight run inside a paragraph
+  ruled_paper_prob: 0.08         # exercise-book ruled/grid background
+  ink_values_prob: 0.35          # form values look pen-written: ink blue + italic
+  mixed_content_prob: 0.15       # inject dates / phone numbers / Latin tokens into body text
+  landscape_prob: 0.05
+  width_jitter: [1080, 1460]     # page width range (was fixed 1240)
+  receipt_narrow_prob: 0.5       # receipt_invoice rendered as a narrow strip
+  # rare-class boosters: insert extra blocks into flow layouts so no class starves
+  # (V3 measured: chart 0.65%, formula 0.54%, hand_drawing 0.20%, signature 0.92% -> all under floor)
+  insert:
+    formula_prob: 0.60
+    chart_prob: 0.70   # was 0.55: chart landed 1.48% vs 1.50% floor on the 30K render
+    image_prob: 0.35   # proportional-sampling truth: image 1.39% < 1.50% floor
+    hand_drawing_prob: 0.40
+    signature_prob: 0.55
+    subheading_prob: 0.30      # subheading dilutes below floor once tables are capped
+
 content:
   # how source corpus text is assembled into a page
   paragraphs_per_article: [3, 9]
   sentences_per_paragraph: [2, 6]
   table:
-    rows: [3, 8]
+    rows: [2, 6]                # capped from [3,8]: table_cell was 18% of det targets (dominating)
     cols: [2, 5]
     header_prob: 0.9
   form:
     fields: [4, 10]
 
-block_types:               # DOM element -> grounded-markdown block tag
+# DOCUMENTATION ONLY (not consumed by code; the Jinja template sets data-block-type directly,
+# which IS the V3 detector class). DOM element -> detector class:
+block_types:
   h1: title
-  h2: section_header
-  h3: section_header
+  h2: heading
+  h3: subheading
   p: text
-  table: table
-  th: table
-  td: table
+  th: table_head
+  td: table_cell
   li: list_item
-  figcaption: caption
-  label: form_label
-  .field-value: form_value
+  .caption: caption
+  .form-label: form_label
+  .form-value: form_value
+  img.image: image
+  img.signature: signature
+  img.hand_drawing: hand_drawing
+  .formula: formula
